@@ -1,0 +1,17 @@
+[project]
+name = "huntmd"
+version = "0.1.0"
+description = "Reference converter + validator for the hunt.md threat-hunting playbook format"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+huntmd = "huntmd.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["huntmd"]

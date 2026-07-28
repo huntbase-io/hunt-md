@@ -74,7 +74,20 @@ PROFILES.md        runtime/interchange adapters + capability matrix
 CONTRIBUTING.md    how to add a hunt + the lint rules
 templates/         hunt-template.md — start here
 hunts/             the hunt library (one .md per hunt)
+tools/             huntmd — reference converter + validator (Python)
 ```
+
+## Tooling
+
+`tools/huntmd` is the reference converter + validator (stdlib + PyYAML):
+
+```bash
+cd tools
+python -m huntmd validate ../hunts/kerberoasting.md          # lint
+python -m huntmd convert  ../hunts/kerberoasting.md          # → Huntbase definition YAML
+```
+
+See [`tools/README.md`](./tools/README.md).
 
 ## Quickstart
 
