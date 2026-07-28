@@ -1,9 +1,10 @@
 """CLI for the hunt.md converter + validator.
 
     uv run python -m huntmd convert  <file.md>            # -> definition YAML (stdout)
+    uv run python -m huntmd convert  <file.md> --to cacao # -> CACAO v2 playbook JSON
     uv run python -m huntmd convert  <file.yaml|.json>    # -> hunt.md (stdout)
-    uv run python -m huntmd convert  <file> --to md|yaml|json -o <out>
-    uv run python -m huntmd validate <file.md> [--profile huntbase|format]
+    uv run python -m huntmd convert  <file> --to md|yaml|json|cacao -o <out>
+    uv run python -m huntmd validate <file.md> [--profile huntbase|format|cacao]
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from pathlib import Path
 
 import yaml
 
+from huntmd.cacao import cacao_to_markdown, markdown_to_cacao
 from huntmd.core import (
     ConversionError,
     definition_to_markdown,
@@ -31,23 +33,38 @@ def _looks_like_markdown(path: Path, text: str) -> bool:
     return text.lstrip().startswith("---") or "\n## " in text
 
 
+def _looks_like_cacao(defn: object) -> bool:
+    """A CACAO playbook has a `workflow` map (possibly under a single-key wrapper)."""
+    if not isinstance(defn, dict):
+        return False
+    if isinstance(defn.get("workflow"), dict):
+        return True
+    if "nodes" in defn:  # Huntbase definition
+        return False
+    return any(isinstance(v, dict) and isinstance(v.get("workflow"), dict) for v in defn.values())
+
+
 def _cmd_convert(args: argparse.Namespace) -> int:
     path = Path(args.file)
     text = path.read_text(encoding="utf-8")
     is_md = _looks_like_markdown(path, text)
     try:
         if is_md:
-            definition = markdown_to_definition(text)
             target = args.to or "yaml"
-            if target == "json":
-                result = json.dumps(definition, indent=2)
+            if target == "cacao":
+                result = json.dumps(markdown_to_cacao(text), indent=2) + "\n"
+            elif target == "json":
+                result = json.dumps(markdown_to_definition(text), indent=2)
             elif target == "yaml":
-                result = yaml.safe_dump(definition, sort_keys=False, default_flow_style=False)
+                result = yaml.safe_dump(markdown_to_definition(text), sort_keys=False, default_flow_style=False)
             else:
-                raise ConversionError("Converting hunt.md → md is a no-op; use --to yaml|json.")
+                raise ConversionError("Converting hunt.md → md is a no-op; use --to yaml|json|cacao.")
+        elif args.to == "cacao":
+            raise ConversionError("--to cacao takes a hunt.md source (the input is already a playbook).")
         else:
             definition = json.loads(text) if path.suffix.lower() == ".json" else yaml.safe_load(text)
-            result = definition_to_markdown(definition)
+            # Both inbound formats are JSON/YAML objects; tell them apart by shape.
+            result = cacao_to_markdown(definition) if _looks_like_cacao(definition) else definition_to_markdown(definition)
     except ConversionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -77,13 +94,22 @@ def main(argv: list[str] | None = None) -> int:
 
     c = sub.add_parser("convert", help="hunt.md ⇄ Huntbase definition")
     c.add_argument("file")
-    c.add_argument("--to", choices=["md", "yaml", "json"], help="output format (md input defaults to yaml)")
+    c.add_argument(
+        "--to",
+        choices=["md", "yaml", "json", "cacao"],
+        help="output format (md input defaults to yaml; 'cacao' emits a CACAO v2 playbook)",
+    )
     c.add_argument("-o", "--output", help="write to file instead of stdout")
     c.set_defaults(func=_cmd_convert)
 
     v = sub.add_parser("validate", help="lint a hunt.md")
     v.add_argument("file")
-    v.add_argument("--profile", choices=["huntbase", "format"], default="huntbase")
+    v.add_argument(
+        "--profile",
+        choices=["huntbase", "format", "cacao"],
+        default="huntbase",
+        help="lint against a runtime/interchange profile (default: huntbase)",
+    )
     v.set_defaults(func=_cmd_validate)
 
     args = parser.parse_args(argv)

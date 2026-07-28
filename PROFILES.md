@@ -39,7 +39,7 @@ construct survive the trip?) is the CACAO column — CACAO is a transport format
 so nothing "runs" there by design; the SOAR platform on the far side decides
 that.
 
-| Format construct | hunt.md (source) | Huntbase (executes) | CACAO v2 (exports) | Docs-only |
+| Format construct | hunt.md (source) | Huntbase (executes) | CACAO v2 (interchange) | Docs-only |
 |---|---|---|---|---|
 | `query` step | ✍️ one fenced block | ✅ runs on connectors | 📦 `x-org-query` * | 📄 rendered |
 | `collection` step | ✍️ ` ```collect ` | ✅ runs | 📦 command | 📄 |
@@ -125,7 +125,7 @@ inverse serializer (round-trip with `derive()`).
 
 ---
 
-## 2. CACAO v2 profile (interchange export)
+## 2. CACAO v2 profile (interchange)
 
 **CACAO is the standard we export to, and we're glad it exists.** OASIS CACAO
 Security Playbooks v2 is the right answer to "how do playbooks move between
@@ -164,9 +164,60 @@ source of truth is what preserves that richer meaning for everyone downstream.
 
 **Fidelity.** Export is lossless for the constructs above and **lossy-forward**
 only where CACAO has no native concept (rare); those spill into extension
-properties rather than being dropped. Export is one-way today — the `.md` stays
-authoritative. Signing applies to the compiled CACAO artifact; the source is
-signed by version control.
+properties rather than being dropped. Signing applies to the compiled CACAO
+artifact; the source is signed by version control.
+
+**Producing it.** Implemented in [`tools/huntmd/cacao.py`](./tools/huntmd/cacao.py):
+
+```bash
+huntmd convert hunts/kerberoasting.md --to cacao -o kerberoasting.cacao.json
+huntmd validate hunts/kerberoasting.md --profile cacao
+```
+
+The exporter brackets the workflow in CACAO `start`/`end` steps, maps
+`parameters:` to external `playbook_variables` (`{{lookback}}` → `__lookback__`)
+and `$var` dataflow to internal ones, resolves `targets:` into
+`agent_definitions` / `target_definitions`, and emits ATT&CK labels as
+`external_references` alongside the `x-hunt` extension. Identifiers are
+deterministic (`uuid5` over the playbook id + `kind:slug`, SPEC §10), so an
+unchanged hunt re-exports byte-identically apart from its timestamps.
+
+Two structural notes, since CACAO's graph model differs slightly from the IR's:
+a `then:`/`else:` arm pointing at `end` is implicit in hunt.md but explicit in
+CACAO (it resolves to the end step), and a non-decision step that fans out to
+several successors gets a synthetic `parallel` step, because a CACAO `action`
+has only one `on_completion`.
+
+### Import (CACAO → hunt.md)
+
+The reverse direction works too — `huntmd convert playbook.json` detects a CACAO
+playbook by shape and emits hunt.md. It accepts **CACAO 2.0 and 1.x** (the older
+`single` step type), all workflow step types, and the command types that appear
+in practice (`ssh`, `bash`, `powershell`, `http-api`, `openc2`, `manual`,
+`attack-cmd`, …). Step kinds are recovered from command types: `x-org-query` →
+`query`, `x-org-agent-directive` → `agent`, `manual` → `task`, anything that
+changes state → `action` (SPEC §9). Original step ids are pinned in Tier-2
+blocks, and the three variable conventions found in the wild (`__x__`, `$$x$$`,
+bare) all normalise to `{{x}}`.
+
+**An import is a draft, not a hunt.** A foreign playbook carries no hypothesis,
+no ATT&CK labels and no abstract `targets:`, because CACAO has nowhere to put
+them. The importer emits `TODO` markers for each, so `huntmd validate` points
+straight at what an author still has to supply. The `.md` is the source of truth
+from that point on; regenerate the CACAO artifact rather than editing it.
+
+**Round-trip.** `md → CACAO → md` is exact for hunt.md-authored files — step
+kinds, slugs (including `###` group paths), targets, parameters and every edge
+survive, because the exporter carries what CACAO can't natively express
+(`x_hunt_kind`, `x_hunt_slug`, `x_hunt_role`, `x_hunt_type`) in extension
+properties. `CACAO → md → CACAO` preserves every step and its wiring; what it
+cannot invent is the hunt metadata the source never had.
+
+**Tested against real playbooks.** The importer was developed against a corpus of
+**49 CACAO playbooks from six independent projects** — every one converts to a
+hunt.md that parses and lints clean, with all 332 steps preserved. Reference
+conversions and a script that reproduces the corpus are in
+[`examples/cacao-import/`](./examples/cacao-import).
 
 ---
 

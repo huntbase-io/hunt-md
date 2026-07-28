@@ -19,13 +19,18 @@ pip install -e .                                        # or: pip install pyyaml
 python -m huntmd validate ../hunts/kerberoasting.md                 # lint (huntbase profile, default)
 python -m huntmd validate ../hunts/kerberoasting.md --profile format # lint against the neutral spec only
 python -m huntmd convert  ../hunts/kerberoasting.md                 # hunt.md → Huntbase definition YAML
-python -m huntmd convert  ../hunts/kerberoasting.md --to json -o out.json
+python -m huntmd convert  ../hunts/kerberoasting.md --to cacao      # hunt.md → CACAO v2 playbook JSON
 python -m huntmd convert  ../my-hunt.definition.yaml                # definition → hunt.md (best-effort inverse)
+python -m huntmd convert  ../some-cacao-playbook.json               # CACAO → hunt.md (draft, TODO-marked)
 ```
 
-`validate` exits non-zero only on **errors**; warnings pass. Direction is inferred from file extension/content, not a flag.
+`validate` exits non-zero only on **errors**; warnings pass. Conversion direction is inferred from file extension and *shape* (`nodes` ⇒ Huntbase definition, `workflow` ⇒ CACAO), not a flag.
 
-There is no test suite and no CI workflow in the repo (the README refers to CI lint that isn't wired up yet). The de-facto regression check is running `validate` and `convert` over both files in [hunts/](hunts/) — do that after any change to `core.py`, and diff the converter output before/after.
+There is no test suite and no CI workflow in the repo (the README refers to CI lint that isn't wired up yet). The de-facto regression checks after touching `core.py` or `cacao.py`:
+
+1. `validate` + `convert` (all three targets) over both files in [hunts/](hunts/).
+2. **Round-trip must stay exact** for repo hunts: `md → cacao → md` preserves step kinds, slugs, targets, parameters and every edge. This is load-bearing — it's what the CACAO profile claims in [PROFILES.md](PROFILES.md).
+3. **Corpus check**: [examples/cacao-import/fetch-corpus.sh](examples/cacao-import/fetch-corpus.sh) pulls 49 real CACAO playbooks from six projects; all must import, parse and lint clean (332 steps preserved). Requires `gh` + network. The vendored conversions in [examples/cacao-import/](examples/cacao-import/) are the offline fixtures.
 
 ## Architecture
 
@@ -33,7 +38,7 @@ There is no test suite and no CI workflow in the repo (the README refers to CI l
 
 1. **Format** ([SPEC.md](SPEC.md)) — the IR and Markdown syntax. Vendor-neutral by rule: no product, agent, or model may be named in the core format.
 2. **Profiles** ([PROFILES.md](PROFILES.md)) — adapters from the IR to a runtime (Huntbase), an interchange target (CACAO v2), or docs-only. Platform specifics belong **here, never in SPEC.md**. The capability matrix at the top of PROFILES.md is the contract: ✅ native / ⚠️ documented substitution / ❌ lint-and-reject.
-3. **Reference implementation** ([tools/huntmd/](tools/huntmd/)) — one adapter over the parsed graph, targeting the Huntbase profile.
+3. **Reference implementation** ([tools/huntmd/](tools/huntmd/)) — adapters over the parsed graph: `core.py` for the Huntbase definition, `cacao.py` for CACAO v2 (both directions).
 
 ### The pipeline in `tools/huntmd/core.py` (single ~650-line module)
 
@@ -41,11 +46,15 @@ There is no test suite and no CI workflow in the repo (the README refers to CI l
 hunt.md text
   → _split_frontmatter / _iter_sections / _parse_section   (per-## section → Step)
   → _wire_edges                                            (document order + → jumps + then/else/indeterminate + parallel/join)
-  → Playbook{name, description, meta, steps[], edges[]}    (the IR)
-  → playbook_to_definition                                 (IR → Huntbase {"hunt", "nodes":[…]})
-  → definition_to_markdown                                 (inverse, best-effort)
-  → validate_markdown                                      (IR → list[Issue])
+  → Playbook{name, description, meta, steps[], edges[]}    (the IR — everything hangs off this)
+       ├→ playbook_to_definition   (IR → Huntbase {"hunt", "nodes":[…]})
+       ├→ playbook_to_cacao        (IR → CACAO v2)          [cacao.py]
+       ├→ playbook_to_markdown     (IR → hunt.md source)    ← used by both importers
+       └→ validate_markdown        (IR → list[Issue])
+  cacao_to_playbook / definition_to_markdown are the inbound halves.
 ```
+
+Adding another interchange format means writing `X_to_playbook` / `playbook_to_X` against the IR — never touching the parser.
 
 Key invariants when editing:
 
@@ -54,6 +63,8 @@ Key invariants when editing:
 - **Three fidelity tiers (SPEC §2).** Tier 1 native Markdown, Tier 2 `~~~yaml` attribute blocks (parsed by `_extract_inner_yaml`), Tier 3 raw ` ```hunt-json `. A decompiler must prefer Tier 1, spill to Tier 2, fall back to Tier 3, and **never drop data** — preserve unknown keys through both directions.
 - **`{{param}}` vs `$var`.** `{{name}}` is a launch-time parameter (portable, substituted via `params=(qname=source)` in the info string); `$name` is runtime dataflow between steps (`out=`/`in=`). Queries stay parameterized — never inline values into query text.
 - **Two DSL sets.** `_KNOWN_DSLS` (format-level; unknown ⇒ warn, never reject) is a superset of `_HUNTBASE_DSLS` (what the runtime can execute). Unknown language is a lint, not a format error.
+- **`x_hunt_*` extension keys are the round-trip's load-bearing parts.** CACAO collapses distinctions hunt.md makes — task vs action are both `manual` commands, query vs collection both `x-org-query`, and step slugs aren't recoverable from display names. `x_hunt_kind`, `x_hunt_slug`, `x_hunt_role` and `x_hunt_type` carry them across. Drop one and the round-trip silently degrades (an `action` returns as a `task`) rather than failing loudly.
+- **Arrow suppression depends on in-degree.** `playbook_to_markdown` omits a `→` when the successor is simply the next step in the document, but only if that successor has exactly one parent. A join or jump target needs its edge written out, or reparsing won't rebuild it (`_wire_edges` skips document-order edges into explicitly-targeted steps).
 
 ### Linter rules (`validate_markdown`)
 

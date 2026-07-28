@@ -495,6 +495,157 @@ def markdown_to_definition(text: str) -> dict[str, Any]:
     return playbook_to_definition(parse_markdown(text))
 
 
+# --- emit: Playbook -> hunt.md ----------------------------------------------
+
+#: Frontmatter key order (SPEC §3.1) — everything else keeps its own order after.
+_FM_ORDER = (
+    "id",
+    "type",
+    "name",
+    "labels",
+    "tlp",
+    "severity",
+    "hypothesis",
+    "references",
+    "parameters",
+    "targets",
+)
+#: Attribute keys rendered by native syntax, so they never repeat in a Tier-2 block.
+_NATIVE_ATTRS = {
+    "objective",
+    "tools",
+    "context",
+    "success_criteria",
+    "max_iterations",
+    "approval",
+    "in",
+    "out",
+    "target",
+    "params",
+    "description",
+}
+
+
+def _fm_dump(meta: dict[str, Any]) -> str:
+    ordered = {k: meta[k] for k in _FM_ORDER if k in meta}
+    ordered.update({k: v for k, v in meta.items() if k not in ordered})
+    return yaml.safe_dump(ordered, sort_keys=False, default_flow_style=False, allow_unicode=True).strip()
+
+
+def _info_string(s: Step) -> str:
+    bits = []
+    if s.target:
+        bits.append(f"target={s.target}")
+    if s.params:
+        bits.append("params=(" + ", ".join(f"{k}={v}" for k, v in s.params.items()) + ")")
+    for key in ("in", "out"):
+        value = s.attrs.get(key)
+        if value:
+            rendered = ",".join(str(v) for v in value) if isinstance(value, list) else str(value)
+            bits.append(f"{key}={rendered}")
+    return (" " + " ".join(bits)) if bits else ""
+
+
+def playbook_to_markdown(pb: Playbook) -> str:
+    """Serialise the IR back to hunt.md (Tier-1 native syntax, Tier-2 for the rest).
+
+    Used by the decompilers (definition and CACAO import). Emits every step kind
+    — including `parallel`, `while:` and `run:` — so nothing is dropped on the
+    way back to source (SPEC §2).
+    """
+    out: list[str] = []
+    if pb.meta:
+        out += ["---", _fm_dump(pb.meta), "---", ""]
+    out.append(f"# {pb.name or 'Untitled hunt'}\n")
+    if pb.description:
+        out.append(pb.description.strip() + "\n")
+
+    children: dict[str, list[tuple[str, str | None]]] = {}
+    indegree: dict[str, int] = {}
+    for e in pb.edges:
+        children.setdefault(e.frm, []).append((e.to, e.branch))
+        indegree[e.to] = indegree.get(e.to, 0) + 1
+    order = [s.slug for s in pb.steps]
+
+    for idx, s in enumerate(pb.steps):
+        out.append(f"## {s.slug}")
+        info = _info_string(s)
+        extra = {k: v for k, v in s.attrs.items() if k not in _NATIVE_ATTRS}
+
+        if s.kind in ("query", "collection"):
+            lang = "collect" if s.kind == "collection" else (s.lang or "sql")
+            out += [f"```{lang}{info}", s.body.rstrip(), "```"]
+        elif s.kind == "agent":
+            directive = {k: s.attrs[k] for k in ("objective", "context", "tools", "success_criteria", "max_iterations") if k in s.attrs}
+            directive.setdefault("objective", s.body.strip())
+            out += [f"```agent{info}", yaml.safe_dump(directive, sort_keys=False, allow_unicode=True).strip(), "```"]
+        elif s.kind in ("task", "action"):
+            block = "manual" if s.kind == "task" else "action"
+            out.append(f"```{block}{info}")
+            if s.kind == "action" and s.attrs.get("approval"):
+                out += ["~~~yaml", f"approval: {s.attrs['approval']}", "~~~"]
+            out += [s.body.rstrip(), "```"]
+        elif s.kind == "decision":
+            if s.switch_cases:
+                out.append(f"switch: `{s.condition or ''}`")
+                width = max((len(f'"{v}"') for v, _ in s.switch_cases), default=0)
+                for value, target in s.switch_cases:
+                    label = "default" if str(value).lower() == "default" else f'"{value}"'
+                    out.append(f"- {label.ljust(width)} → {target}")
+            else:
+                cond = f"`{s.condition or ''}`"
+                if s.fuzzy:
+                    qualifiers = []
+                    if s.confidence is not None:
+                        qualifiers.append(f"confidence >= {s.confidence}")
+                    if s.judge:
+                        qualifiers.append(f"judge={s.judge}")
+                    cond = f'"{s.condition or ""}"' + (f" ({', '.join(qualifiers)})" if qualifiers else "")
+                out.append(f"{'if~:' if s.fuzzy else 'if:'} {cond}")
+                for branch, keyword in (("on_supports", "then"), ("default", "indeterminate"), ("on_refutes", "else")):
+                    for to, br in children.get(s.slug, []):
+                        if br == branch:
+                            out.append(f"{keyword}: → {to}")
+        elif s.kind == "loop":
+            bound = f" (max_iterations={s.attrs['max_iterations']})" if s.attrs.get("max_iterations") else ""
+            out.append(f"while: {s.condition or ''}{bound}")
+            # `do:` is the loop body; an unbranched successor is the exit edge and
+            # falls through to the arrow logic below.
+            for to, br in children.get(s.slug, []):
+                if br == "on_supports":
+                    out.append(f"do: → {to}")
+        elif s.kind == "parallel":
+            out.append("parallel:")
+            out += [f"- → {b}" for b in s.branches]
+            if s.join:
+                out.append(f"join: → {s.join}")
+        elif s.kind == "subplaybook":
+            out.append(f"run: {s.run_target or ''}")
+        else:
+            out.append(s.body.rstrip())
+
+        if extra:
+            out += ["~~~yaml", yaml.safe_dump(extra, sort_keys=False, allow_unicode=True).strip(), "~~~"]
+
+        # Flow: document order carries the common case; emit an arrow only where
+        # the successor isn't the next step in the document (SPEC §4.1).
+        if s.kind not in ("decision", "parallel"):
+            kids = [to for to, br in children.get(s.slug, []) if br is None]
+            following = order[idx + 1] if idx + 1 < len(order) else None
+            # Fall through to document order only when the next step is reached
+            # from here *alone* — a step with other parents (a join, a jump
+            # target) needs the edge stated, or a reparse won't rebuild it.
+            implicit = kids == [following] and indegree.get(following, 0) == 1
+            if not kids:
+                if s.kind != "loop":
+                    out.append("→ end")
+            elif not implicit:
+                out += [f"→ {to}" for to in kids]
+        out.append("")
+
+    return "\n".join(out).rstrip() + "\n"
+
+
 # --- emit: definition -> hunt.md (best-effort inverse) ----------------------
 
 
@@ -579,7 +730,12 @@ class Issue:
 
 
 def validate_markdown(text: str, *, profile: str = "huntbase") -> list[Issue]:
-    """Lint a hunt.md against the format + a runtime profile ('huntbase' | 'format')."""
+    """Lint a hunt.md against the format + a profile.
+
+    ``format`` checks the neutral spec only; ``huntbase`` adds that runtime's
+    capability gaps; ``cacao`` adds none — every construct exports (PROFILES §2),
+    so a hunt clean at ``format`` level is clean for interchange.
+    """
     issues: list[Issue] = []
     try:
         pb = parse_markdown(text)

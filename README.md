@@ -106,10 +106,15 @@ so it vendors cleanly into a runtime's import path.
 ```bash
 cd tools && pip install -e .
 
-huntmd validate ../hunts/kerberoasting.md     # lint against a runtime profile
-huntmd convert  ../hunts/kerberoasting.md     # → Huntbase definition YAML
-huntmd convert  ../my-hunt.definition.yaml    # → hunt.md (inverse)
+huntmd validate ../hunts/kerberoasting.md              # lint against a profile
+huntmd convert  ../hunts/kerberoasting.md              # → Huntbase definition YAML
+huntmd convert  ../hunts/kerberoasting.md --to cacao   # → CACAO v2 playbook JSON
+huntmd convert  ../my-hunt.definition.yaml             # → hunt.md (inverse)
+huntmd convert  ../some-cacao-playbook.json            # CACAO → hunt.md (draft)
 ```
+
+CACAO import/export is round-trip exact and tested against
+[49 real playbooks](./examples/cacao-import) from six independent projects.
 
 See [`tools/README.md`](./tools/README.md) for the full CLI.
 
@@ -123,6 +128,7 @@ See [`tools/README.md`](./tools/README.md) for the full CLI.
 | [`templates/`](./templates) | `hunt-template.md` — start here |
 | [`hunts/`](./hunts) | The hunt library (one `.md` per hunt) |
 | [`tools/`](./tools) | `huntmd` — reference converter + validator (Python) |
+| [`examples/`](./examples) | Reference conversions from other formats (not curated hunts) |
 
 ## Status
 
