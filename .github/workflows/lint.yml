@@ -1,0 +1,68 @@
+name: lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Format checks + round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install huntmd
+        run: pip install ./tools
+
+      - name: Lint every hunt against the neutral spec
+        run: |
+          status=0
+          for f in hunts/*.md; do
+            echo "::group::$f"
+            huntmd validate "$f" --profile format || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: Lint every hunt against the Huntbase profile (warnings allowed)
+        run: |
+          for f in hunts/*.md; do
+            echo "::group::$f"
+            huntmd validate "$f" --profile huntbase || true
+            echo "::endgroup::"
+          done
+
+      - name: Regression checks (conversion + exact CACAO round-trip)
+        run: python tools/tests/check.py
+
+  disclosure:
+    name: Publication guardrail (TLP)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ./tools
+
+      # This repository is public, so nothing above TLP:GREEN belongs in it.
+      # A hunt that needs a tighter sharing level goes to the private library
+      # instead — see CONTRIBUTING.md. An unmarked hunt fails too: absence of a
+      # label is unreviewed, not safe.
+      - name: No hunt exceeds TLP:GREEN
+        run: |
+          status=0
+          for f in hunts/*.md; do
+            huntmd validate "$f" --profile format --max-tlp green || status=1
+          done
+          if [ $status -ne 0 ]; then
+            echo "::error::A hunt exceeds this repository's TLP:GREEN limit. Relabel it, or move it to the private hunt library."
+          fi
+          exit $status

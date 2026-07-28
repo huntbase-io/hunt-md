@@ -1,0 +1,52 @@
+name: Spec change or gap
+description: The format can't express how you actually hunt
+labels: ["spec"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The spec is a v0.4 draft. If a construct doesn't fit your real workflow,
+        that's a bug in the format — this is the most valuable kind of issue.
+
+  - type: textarea
+    id: cannot
+    attributes:
+      label: What can't you express today?
+      description: The hunt or step you tried to write, and where it fell over.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How are you working around it?
+      description: An awkward workaround tells us how much the gap actually costs.
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed syntax or semantics
+      description: Optional. A rough sketch is fine.
+      render: markdown
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Steps and step kinds
+        - Control flow (decisions, loops, parallel)
+        - Agents and fuzzy conditions
+        - Targets and data sources
+        - Parameters and dataflow
+        - Metadata / frontmatter
+        - Profiles (runtime or CACAO)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: runtime
+    attributes:
+      label: Which runtime or platform are you targeting?
+      description: Optional — helps judge whether it belongs in SPEC.md or PROFILES.md.

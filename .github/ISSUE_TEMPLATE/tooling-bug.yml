@@ -1,0 +1,36 @@
+name: Tooling bug
+description: huntmd converts, lints, or parses something incorrectly
+labels: ["tooling"]
+body:
+  - type: textarea
+    id: command
+    attributes:
+      label: Command
+      placeholder: huntmd convert hunts/my-hunt.md --to cacao
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Input (minimal)
+      description: |
+        The smallest hunt.md or playbook that reproduces it. **Redact first** —
+        issues are public.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs. actual
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`git rev-parse --short HEAD`, and your Python version."

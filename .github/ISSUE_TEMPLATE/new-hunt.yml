@@ -1,0 +1,62 @@
+name: Propose a hunt
+description: Suggest a hunt for the library (you don't have to write it yourself)
+labels: ["hunt"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposing is useful even if you can't write the hunt — a well-described
+        hypothesis with sources is most of the work.
+
+        **Do not include** customer names, internal hostnames, tenant identifiers,
+        or anything above TLP:GREEN. This repository is public.
+
+  - type: input
+    id: hypothesis
+    attributes:
+      label: Hypothesis
+      description: The adversary behaviour you believe is present, in one or two sentences.
+      placeholder: Service accounts are being kerberoasted from non-admin workstations.
+    validations:
+      required: true
+
+  - type: input
+    id: attack
+    attributes:
+      label: ATT&CK technique(s)
+      placeholder: T1558.003
+    validations:
+      required: true
+
+  - type: textarea
+    id: sources
+    attributes:
+      label: Data sources required
+      description: What a runtime would need connected for this to work.
+      placeholder: |
+        - SIEM (Windows security events)
+        - Identity provider audit log
+    validations:
+      required: true
+
+  - type: textarea
+    id: logic
+    attributes:
+      label: Detection logic / approach
+      description: Queries, thresholds, or the shape of the reasoning. Pseudocode is fine.
+
+  - type: textarea
+    id: fps
+    attributes:
+      label: Known false positives
+      description: What legitimately looks like this? Often the most valuable field here.
+
+  - type: textarea
+    id: refs
+    attributes:
+      label: References
+      placeholder: |
+        - CISA AA23-320A — https://www.cisa.gov/...
+        - https://attack.mitre.org/techniques/T1558/003/
+    validations:
+      required: true

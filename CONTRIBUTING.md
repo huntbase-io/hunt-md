@@ -14,7 +14,15 @@ against the format spec and a lint pass.
    - `targets` and `parameters` your steps reference,
    - at least one `query` or `collection` step and, where useful, an `agent`
      step and a decision.
-4. Open a PR. Describe the threat, the data sources needed, and any known false
+4. Lint it locally — CI runs exactly this:
+
+   ```bash
+   pip install ./tools
+   huntmd validate hunts/my-hunt.md --profile format --max-tlp green
+   python tools/tests/check.py
+   ```
+
+5. Open a PR. Describe the threat, the data sources needed, and any known false
    positives.
 
 ## Authoring rules (what the linter checks)
@@ -35,6 +43,42 @@ against the format spec and a lint pass.
 - **Portability** — prefer abstract `targets` (`category:`); add per-runtime
   `bindings` (e.g. `huntbase: { product: … }`) rather than hard-coding a product
   as the only option.
+
+## What belongs in this repository
+
+This repository is **public and MIT-licensed**. Everything in it is world-readable
+forever, including anything you push and then delete — so the boundary is
+enforced mechanically, not by reviewer memory.
+
+**Keep out of this repo:**
+
+- Hunts above **TLP:GREEN**. CI runs `huntmd validate --max-tlp green` and fails
+  the build otherwise. A hunt with no `tlp:` at all also fails — an unlabelled
+  hunt is unreviewed, not safe.
+- Customer names, tenant identifiers, internal hostnames, IP ranges, or
+  account names — including in example output and comments.
+- Detection content you don't have the rights to publish (vendor rule packs,
+  licensed feeds, content from a paid subscription).
+- Anything derived from an engagement under NDA, even if generalised, unless the
+  client has agreed in writing.
+
+If a hunt is genuinely useful but can't be public, the right home is a **private
+hunt library** — a separate private repository that consumes this one as a
+pinned dependency. The same format, the same tooling, a different sharing
+boundary. Nothing about hunt.md requires your hunts to be public.
+
+**Redact before you open an issue**, too. Issues and PR discussions are as public
+as the code.
+
+## Certificate of origin
+
+By opening a PR you confirm you have the right to contribute the content under
+this repository's [`LICENSE`](./LICENSE), and that it isn't subject to a
+confidentiality obligation. Sign your commits off if your employer requires it:
+
+```bash
+git commit -s -m "Add hunt for ..."
+```
 
 ## Scope & quality
 

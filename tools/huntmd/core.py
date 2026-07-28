@@ -40,6 +40,10 @@ _KNOWN_DSLS = _HUNTBASE_DSLS | {"sql", "eql", "sigma", "yara", "kestrel"}
 
 _SEVERITY_ORDINAL = {"critical", "high", "medium", "low"}
 
+#: TLP:2.0 sharing levels, least to most restricted. Used by `--max-tlp` so a
+#: public repository can mechanically reject hunts that shouldn't leave the org.
+_TLP_RANK = {"clear": 0, "white": 0, "green": 1, "amber": 2, "amber+strict": 3, "red": 4}
+
 
 def _str_representer(dumper: yaml.SafeDumper, data: str):
     """Dump multi-line strings (queries, objectives) as readable literal blocks."""
@@ -729,12 +733,16 @@ class Issue:
         return f"[{self.level.upper():5}] {self.slug or '-'}: {self.message}"
 
 
-def validate_markdown(text: str, *, profile: str = "huntbase") -> list[Issue]:
+def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | None = None) -> list[Issue]:
     """Lint a hunt.md against the format + a profile.
 
     ``format`` checks the neutral spec only; ``huntbase`` adds that runtime's
     capability gaps; ``cacao`` adds none — every construct exports (PROFILES §2),
     so a hunt clean at ``format`` level is clean for interchange.
+
+    ``max_tlp`` caps the permitted sharing level: a public repository lints with
+    ``max_tlp="green"`` so an ``amber``/``red`` hunt fails CI rather than being
+    published by mistake.
     """
     issues: list[Issue] = []
     try:
@@ -746,6 +754,9 @@ def validate_markdown(text: str, *, profile: str = "huntbase") -> list[Issue]:
     severity = pb.meta.get("severity")
     if isinstance(severity, str) and severity not in _SEVERITY_ORDINAL:
         issues.append(Issue("warn", "", f"severity '{severity}' not in {sorted(_SEVERITY_ORDINAL)}"))
+
+    if max_tlp:
+        issues += _check_tlp(pb, max_tlp)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -786,6 +797,22 @@ def validate_markdown(text: str, *, profile: str = "huntbase") -> list[Issue]:
                 if src.startswith("$"):
                     issues.append(Issue("warn", s.slug, f"runtime variable '{src}' → uses session/entity scoping on Huntbase (no named binding)"))
     return issues
+
+
+def _check_tlp(pb: Playbook, max_tlp: str) -> list[Issue]:
+    """Enforce a sharing ceiling. An unmarked hunt is treated as unreviewed, not safe."""
+    ceiling = _TLP_RANK.get(str(max_tlp).strip().lower())
+    if ceiling is None:
+        return [Issue("error", "", f"unknown --max-tlp '{max_tlp}'; expected one of {sorted(_TLP_RANK)}")]
+    declared = pb.meta.get("tlp")
+    if declared is None:
+        return [Issue("error", "", f"no 'tlp:' declared, and this repository requires tlp <= {max_tlp}")]
+    rank = _TLP_RANK.get(str(declared).strip().lower())
+    if rank is None:
+        return [Issue("error", "", f"unrecognised tlp '{declared}'; expected one of {sorted(_TLP_RANK)}")]
+    if rank > ceiling:
+        return [Issue("error", "", f"tlp '{declared}' exceeds this repository's limit of '{max_tlp}' — do not publish here")]
+    return []
 
 
 def _runtime_vars(s: Step) -> list[str]:

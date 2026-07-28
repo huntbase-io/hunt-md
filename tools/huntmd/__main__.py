@@ -79,7 +79,7 @@ def _cmd_convert(args: argparse.Namespace) -> int:
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     text = Path(args.file).read_text(encoding="utf-8")
-    issues = validate_markdown(text, profile=args.profile)
+    issues = validate_markdown(text, profile=args.profile, max_tlp=args.max_tlp)
     errors = [i for i in issues if i.level == "error"]
     for issue in issues:
         print(str(issue), file=sys.stderr)
@@ -109,6 +109,12 @@ def main(argv: list[str] | None = None) -> int:
         choices=["huntbase", "format", "cacao"],
         default="huntbase",
         help="lint against a runtime/interchange profile (default: huntbase)",
+    )
+    v.add_argument(
+        "--max-tlp",
+        metavar="LEVEL",
+        help="fail if the hunt's tlp: exceeds LEVEL (clear|green|amber|amber+strict|red). "
+        "A public repository lints with --max-tlp green.",
     )
     v.set_defaults(func=_cmd_validate)
 
