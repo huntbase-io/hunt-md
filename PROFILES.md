@@ -10,30 +10,72 @@ profile. Profiles only decide how it *renders elsewhere* and *what runs*.
 
 ---
 
+## How the layers relate
+
+The three profiles are not competitors — they're different jobs, and a hunt
+passes through all of them:
+
+```
+hunt.md            →   runtime profile      →   interchange profile
+(author · review        (Huntbase: run it)       (CACAO v2: share it)
+ · diff · render)
+   the source            the execution             the wire format
+```
+
+`hunt.md` is the **source of truth**: the artifact a human writes, a reviewer
+diffs in a PR, and version control signs. A runtime profile is where it
+*executes*. An interchange profile is how it *travels* between organizations.
+Asking which is "better" is asking whether source code is better than a build
+artifact — they're different stages of the same pipeline, and hunt.md is the
+stage humans work at.
+
+---
+
 ## Capability matrix (at a glance)
 
-| Format construct | Huntbase (runtime) | CACAO v2 (export) | Generic / docs-only |
-|---|---|---|---|
-| `query` step | ✅ executes (connectors) | ✅ `x-org-query` command | 📄 rendered |
-| `collection` step | ✅ executes | ✅ command | 📄 |
-| `agent` step | ✅ executes (an agent) | ✅ `x-org-agent-directive` | 📄 |
-| `decision` `if:` | ✅ | ✅ `if-condition` | 📄 |
-| `decision` `if~:` (fuzzy) | ✅ (agent-judged) | ✅ `x-org-fuzzy-condition` | 📄 |
-| `decision` `switch:` | ⚠️ chained binary | ✅ `switch-condition` | 📄 |
-| `task` (human) | ✅ | ✅ `manual` | 📄 |
-| `action` (change) | ✅ approval-gated | ✅ action step | 📄 |
-| `parallel` / `join` | ✅ | ✅ `parallel` | 📄 |
-| launch `parameters` (`{{}}`) | ✅ | ✅ `playbook_variables` | 📄 |
-| runtime dataflow (`$var out/in`) | ⚠️ entity/session-scoping | ✅ `__var__` | ❌ |
-| `loop` (`while:`) | ❌ (agent `max_iterations` only) | ✅ `while-condition` | ❌ |
-| `subplaybook` (`run:`) | ❌ (launch separately) | ✅ `playbook-action` | ❌ |
+Two different questions, so two different legends. **Execution** (does it
+actually run?) is the Huntbase and docs-only columns. **Expression** (does the
+construct survive the trip?) is the CACAO column — CACAO is a transport format,
+so nothing "runs" there by design; the SOAR platform on the far side decides
+that.
 
-✅ native · ⚠️ supported with a documented substitution · ❌ not supported (lint) · 📄 rendered as text (no execution)
+| Format construct | hunt.md (source) | Huntbase (executes) | CACAO v2 (exports) | Docs-only |
+|---|---|---|---|---|
+| `query` step | ✍️ one fenced block | ✅ runs on connectors | 📦 `x-org-query` * | 📄 rendered |
+| `collection` step | ✍️ ` ```collect ` | ✅ runs | 📦 command | 📄 |
+| `agent` step | ✍️ ` ```agent ` | ✅ runs (an agent) | 📦 `x-org-agent-directive` * | 📄 |
+| `decision` `if:` | ✍️ `if:` + `then/else` | ✅ | 📦 `if-condition` | 📄 |
+| `decision` `if~:` (fuzzy) | ✍️ `if~:` | ✅ agent-judged | 📦 `x-org-fuzzy-condition` * | 📄 |
+| `decision` `switch:` | ✍️ case list | ⚠️ chained binary | 📦 `switch-condition` | 📄 |
+| `task` (human) | ✍️ ` ```manual ` | ✅ | 📦 `manual` | 📄 |
+| `action` (change) | ✍️ ` ```action ` | ✅ approval-gated | 📦 action step | 📄 |
+| `parallel` / `join` | ✍️ `parallel:`/`join:` | ✅ | 📦 `parallel` | 📄 |
+| launch `parameters` (`{{}}`) | ✍️ frontmatter | ✅ | 📦 `playbook_variables` | 📄 |
+| runtime dataflow (`$var`) | ✍️ `out=`/`in=` | ⚠️ entity/session-scoping | 📦 `__var__` | ❌ |
+| `loop` (`while:`) | ✍️ `while:` | 🛣️ use bounded agent iteration | 📦 `while-condition` | ❌ |
+| `subplaybook` (`run:`) | ✍️ `run:` | 🛣️ launch sub-hunts separately | 📦 `playbook-action` | ❌ |
+| **hypothesis** | ✍️ frontmatter | ✅ first-class | 📦 `x-hunt` * | 📄 |
+| **ATT&CK techniques** | ✍️ `labels:` | ✅ first-class | 📦 `x-hunt` * | 📄 |
+| **data requirements** | ✍️ derived from `targets:` | ✅ pre-launch check | 📦 `x-hunt` * | 📄 |
+| **human review / diff** | ✅ plain-text PR | — | — | ✅ |
 
-> The matrix is the point of "supported, not a limit": Huntbase executes most of
-> the format today; the few ⚠️/❌ cells are *runtime* gaps, not *format* limits —
-> the same file still round-trips and exports to CACAO, and those gaps are on the
-> Huntbase roadmap.
+✍️ native syntax · ✅ executes natively · ⚠️ executes via a documented substitution ·
+🛣️ not executed today; linted with a documented alternative (roadmap) ·
+📦 exports losslessly · 📄 rendered as text · ❌ not applicable ·
+`*` carried as a CACAO extension (see §2)
+
+**Reading the matrix.** hunt.md's column is full because the format was designed
+around what hunts actually contain — a hypothesis, ATT&CK coverage, data
+requirements, and hybrid deterministic/agentic steps. The bottom four rows are
+the ones to look at: those are hunt-native concepts, and they're the reason the
+format exists rather than being a thin skin over an existing playbook standard.
+
+Nothing is lost travelling downstream: every construct either executes, executes
+via a documented substitution, or exports intact. The ⚠️/🛣️ cells are *runtime
+scope* on the Huntbase roadmap — never format limits and never data loss. A hunt
+using a construct its runtime can't execute still renders, still round-trips
+byte-stably, and still exports in full; the linter says so explicitly rather than
+silently mis-compiling it.
 
 ---
 
@@ -85,9 +127,20 @@ inverse serializer (round-trip with `derive()`).
 
 ## 2. CACAO v2 profile (interchange export)
 
-One-way export from the IR to OASIS CACAO Security Playbooks v2 JSON, for
-STIX/TAXII sharing and SOAR consumption. This is the profile the original
-"CACAO-MD" draft was written against; here it's *an* adapter, not the core.
+**CACAO is the standard we export to, and we're glad it exists.** OASIS CACAO
+Security Playbooks v2 is the right answer to "how do playbooks move between
+organizations and SOAR platforms" — it's well-specified, STIX/TAXII-native, and
+signable. hunt.md doesn't compete with it; hunt.md is the **authoring layer above
+it**. You write the hunt in Markdown, review it in a PR, and compile it to CACAO
+when it's time to ship.
+
+That division of labour is the point. CACAO JSON is an excellent *machine*
+interchange format and a poor thing to hand-write or code-review: a hunt is
+hundreds of lines of nested objects with UUID cross-references, where a
+one-character diff is unreadable. hunt.md gives that same graph a human surface —
+and then hands CACAO a complete, valid artifact.
+
+**Mapping.** The IR lines up cleanly with CACAO's workflow model:
 
 - steps → CACAO workflow steps (`action`, `if-condition`, `switch-condition`,
   `while-condition`, `parallel`, `playbook-action`).
@@ -98,11 +151,22 @@ STIX/TAXII sharing and SOAR consumption. This is the profile the original
   confidence_threshold, on_indeterminate`).
 - targets → `agent_definitions` / `target_definitions`.
 - hunt metadata (hypothesis, ATT&CK techniques, data requirements) → an `x-hunt`
-  playbook extension — what makes a CACAO library queryable as a *hunt* catalog.
+  playbook extension — what makes a CACAO library queryable as a *hunt* catalog
+  rather than a flat pile of playbooks.
 
-Export is **lossy-forward** where CACAO can't express a hunt.md construct
-(rare); those spill into extension properties. Signing applies to the compiled
-CACAO artifact, not the markdown (VCS signs the source).
+**On the extensions.** Queries, agent steps, fuzzy conditions, and hunt metadata
+travel as CACAO *extensions* (`x-org-*`, `x-hunt`) — which is exactly the
+mechanism CACAO defines for domain-specific semantics, used as intended. It does
+mean the hunt-specific meaning lives in the extension payload: a generic CACAO
+consumer runs the workflow skeleton, while a hunt-aware consumer gets the
+hypothesis, the ATT&CK coverage, and the agent directives. Keeping hunt.md as the
+source of truth is what preserves that richer meaning for everyone downstream.
+
+**Fidelity.** Export is lossless for the constructs above and **lossy-forward**
+only where CACAO has no native concept (rare); those spill into extension
+properties rather than being dropped. Export is one-way today — the `.md` stays
+authoritative. Signing applies to the compiled CACAO artifact; the source is
+signed by version control.
 
 ---
 
