@@ -1,0 +1,13 @@
+# Compiled / exported artifacts (source of truth is the .md)
+*.cacao.json
+*.hunt.json
+dist/
+build/
+
+# Tooling
+.venv/
+__pycache__/
+node_modules/
+.DS_Store
+.idea/
+.vscode/
