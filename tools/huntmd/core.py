@@ -44,6 +44,49 @@ _SEVERITY_ORDINAL = {"critical", "high", "medium", "low"}
 #: public repository can mechanically reject hunts that shouldn't leave the org.
 _TLP_RANK = {"clear": 0, "white": 0, "green": 1, "amber": 2, "amber+strict": 3, "red": 4}
 
+#: Agent safety posture (SPEC §8.1). Defaults are the *safe* value: a hunt that
+#: omits the block still gets them, and relaxing one shows up in review.
+_GUARDRAIL_DEFAULTS = {
+    "telemetry": "untrusted",
+    "evidence": "citation_required",
+    "missing_data": "not_benign",
+    "claims": "no_unsupported",
+}
+#: Allowed values per guardrail; the first is the safe default.
+_GUARDRAIL_VALUES = {
+    "telemetry": ("untrusted", "trusted"),
+    "evidence": ("citation_required", "none"),
+    "missing_data": ("not_benign", "ignorable"),
+    "claims": ("no_unsupported", "permitted"),
+}
+
+#: Ordinal confidence for `if~:` (SPEC §7.2). Numeric thresholds are tolerated
+#: but bucketed — an LLM's 0.8 is not calibrated, so precision there is fiction.
+_CONFIDENCE_ORDINALS = ("high", "medium", "low")
+
+
+def effective_guardrails(meta: dict[str, Any], step_attrs: dict[str, Any] | None = None) -> dict[str, str]:
+    """Document guardrails over the defaults, then any step-level narrowing."""
+    resolved = dict(_GUARDRAIL_DEFAULTS)
+    for source in (meta.get("guardrails"), (step_attrs or {}).get("guardrails")):
+        if isinstance(source, dict):
+            resolved.update({str(k): str(v) for k, v in source.items()})
+    return resolved
+
+
+def bucket_confidence(value: Any) -> str | None:
+    """Numeric confidence -> ordinal (SPEC §7.2): >=0.8 high, >=0.5 medium, else low."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in _CONFIDENCE_ORDINALS:
+        return text
+    try:
+        n = float(text)
+    except ValueError:
+        return None
+    return "high" if n >= 0.8 else "medium" if n >= 0.5 else "low"
+
 
 def _str_representer(dumper: yaml.SafeDumper, data: str):
     """Dump multi-line strings (queries, objectives) as readable literal blocks."""
@@ -85,8 +128,11 @@ class Step:
     # decision
     condition: str | None = None
     fuzzy: bool = False
-    confidence: float | None = None
+    confidence: float | str | None = None  # ordinal preferred; numeric tolerated
     judge: str | None = None
+    # `unavailable: → end` closes a hunt on data it never examined (SPEC §7.2).
+    # The edge itself vanishes (end is implicit), so the intent is recorded here.
+    unavailable_to_end: bool = False
     # switch/parallel/subplaybook (kept for round-trip + linting)
     branches: list[str] = field(default_factory=list)
     join: str | None = None
@@ -249,11 +295,20 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
             step.kind = "decision"
             step.fuzzy = line.startswith("if~:")
             cond = line.split(":", 1)[1].strip()
-            cm = re.search(r"\(confidence\s*>?=?\s*([\d.]+).*?judge=(\w+)\)", cond)
-            if cm:
-                step.confidence = float(cm.group(1))
-                step.judge = cm.group(2)
-                cond = cond[: cm.start()].strip()
+            # `(confidence: high, judge=hunter)` — ordinal, preferred — or the
+            # legacy `(confidence >= 0.8, judge=hunter)`. Either part may be absent.
+            qualifier = re.search(r"\(([^)]*)\)\s*$", cond)
+            if qualifier:
+                inner = qualifier.group(1)
+                cm = re.search(r"confidence\s*[:>=]+\s*([\w.]+)", inner)
+                jm = re.search(r"judge\s*=\s*(\w+)", inner)
+                if cm or jm:
+                    if cm:
+                        raw = cm.group(1)
+                        step.confidence = float(raw) if re.fullmatch(r"[\d.]+", raw) else raw.lower()
+                    if jm:
+                        step.judge = jm.group(1)
+                    cond = cond[: qualifier.start()].strip()
             step.condition = cond.strip().strip("`\"'")
         elif line.startswith("switch:"):
             step.kind = "decision"
@@ -278,6 +333,12 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
             t = _target_of(line.split(":", 1)[1])
             if t:
                 out_edges.append((t, "default", "sequence"))
+        elif line.startswith("unavailable:"):
+            t = _target_of(line.split(":", 1)[1])
+            if t == "end":
+                step.unavailable_to_end = True
+            elif t:
+                out_edges.append((t, "on_unavailable", "sequence"))
         elif line.startswith("join:"):
             step.join = _target_of(line.split(":", 1)[1])
         elif line.startswith("do:"):
@@ -309,6 +370,8 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
 
 
 def _target_of(s: str) -> str | None:
+    # Authors annotate branches (`then: → x   # why`); the comment isn't a slug.
+    s = re.sub(r"\s+#.*$", "", s.strip())
     m = _ARROW.match(s.strip())
     return m.group(1).strip() if m else (s.strip() or None)
 
@@ -492,7 +555,11 @@ def _config_for(s: Step) -> dict[str, Any]:
 
 def _hunt_meta(pb: Playbook) -> dict[str, Any]:
     keep = ("labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type")
-    return {k: pb.meta[k] for k in keep if k in pb.meta}
+    meta = {k: pb.meta[k] for k in keep if k in pb.meta}
+    # Always resolved, never omitted: a runtime must receive the safety posture
+    # even when the author didn't write the block (SPEC §8.1).
+    meta["guardrails"] = effective_guardrails(pb.meta)
+    return meta
 
 
 def markdown_to_definition(text: str) -> dict[str, Any]:
@@ -601,15 +668,27 @@ def playbook_to_markdown(pb: Playbook) -> str:
                 if s.fuzzy:
                     qualifiers = []
                     if s.confidence is not None:
-                        qualifiers.append(f"confidence >= {s.confidence}")
+                        # Ordinal is written as `confidence: high`; a legacy
+                        # numeric keeps its threshold form so nothing is lost.
+                        numeric = isinstance(s.confidence, (int, float))
+                        qualifiers.append(
+                            f"confidence >= {s.confidence}" if numeric else f"confidence: {s.confidence}"
+                        )
                     if s.judge:
                         qualifiers.append(f"judge={s.judge}")
                     cond = f'"{s.condition or ""}"' + (f" ({', '.join(qualifiers)})" if qualifiers else "")
                 out.append(f"{'if~:' if s.fuzzy else 'if:'} {cond}")
-                for branch, keyword in (("on_supports", "then"), ("default", "indeterminate"), ("on_refutes", "else")):
+                for branch, keyword in (
+                    ("on_supports", "then"),
+                    ("default", "indeterminate"),
+                    ("on_unavailable", "unavailable"),
+                    ("on_refutes", "else"),
+                ):
                     for to, br in children.get(s.slug, []):
                         if br == branch:
                             out.append(f"{keyword}: → {to}")
+                if s.unavailable_to_end:
+                    out.append("unavailable: → end")
         elif s.kind == "loop":
             bound = f" (max_iterations={s.attrs['max_iterations']})" if s.attrs.get("max_iterations") else ""
             out.append(f"while: {s.condition or ''}{bound}")
@@ -757,6 +836,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
 
     if max_tlp:
         issues += _check_tlp(pb, max_tlp)
+    issues += _check_guardrails(pb)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -778,6 +858,29 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
             has_indet = any(e.frm == s.slug and e.branch == "default" for e in pb.edges)
             if not has_indet:
                 issues.append(Issue("error", s.slug, "fuzzy if~: has no indeterminate: branch"))
+            if isinstance(s.confidence, (int, float)):
+                issues.append(
+                    Issue(
+                        "warn",
+                        s.slug,
+                        f"numeric confidence {s.confidence} is not calibrated across models or runs; "
+                        f"prefer ordinal (confidence: {bucket_confidence(s.confidence)})",
+                    )
+                )
+            if s.confidence is not None and isinstance(s.confidence, str) and s.confidence not in _CONFIDENCE_ORDINALS:
+                issues.append(
+                    Issue("error", s.slug, f"confidence '{s.confidence}' not in {list(_CONFIDENCE_ORDINALS)}")
+                )
+            # "We couldn't look" must not end the hunt (SPEC §7.2, §8.1).
+            if s.unavailable_to_end and effective_guardrails(pb.meta, s.attrs)["missing_data"] == "not_benign":
+                issues.append(
+                    Issue(
+                        "error",
+                        s.slug,
+                        "unavailable: → end closes the hunt on telemetry it never examined; "
+                        "route it to a human or a collection step (or set guardrails.missing_data: ignorable)",
+                    )
+                )
         if s.kind == "action":
             gated = s.attrs.get("approval") == "required"
             if not gated:
@@ -796,6 +899,45 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
             for src in list(s.params.values()) + _runtime_vars(s):
                 if src.startswith("$"):
                     issues.append(Issue("warn", s.slug, f"runtime variable '{src}' → uses session/entity scoping on Huntbase (no named binding)"))
+    return issues
+
+
+def _check_guardrails(pb: Playbook) -> list[Issue]:
+    """Validate the safety posture (SPEC §8.1) and surface every relaxation."""
+    issues: list[Issue] = []
+    sources: list[tuple[str, Any]] = [("", pb.meta.get("guardrails"))]
+    sources += [(s.slug, s.attrs.get("guardrails")) for s in pb.steps if "guardrails" in s.attrs]
+
+    for slug, block in sources:
+        if block is None:
+            continue
+        if not isinstance(block, dict):
+            issues.append(Issue("error", slug, "guardrails: must be a mapping"))
+            continue
+        for key, value in block.items():
+            allowed = _GUARDRAIL_VALUES.get(str(key))
+            if allowed is None:
+                issues.append(
+                    Issue("error", slug, f"unknown guardrail '{key}'; expected one of {sorted(_GUARDRAIL_VALUES)}")
+                )
+            elif str(value) not in allowed:
+                issues.append(Issue("error", slug, f"guardrail {key}: '{value}' not in {list(allowed)}"))
+
+    # A weakened guardrail is legal but must be conspicuous in review.
+    agentic = [s for s in pb.steps if s.kind == "agent" or (s.kind == "decision" and s.fuzzy)]
+    if agentic:
+        for slug, _ in sources:
+            step_attrs = next((s.attrs for s in pb.steps if s.slug == slug), {}) if slug else {}
+            for key, value in effective_guardrails(pb.meta, step_attrs).items():
+                if key in _GUARDRAIL_VALUES and value != _GUARDRAIL_DEFAULTS[key]:
+                    issues.append(
+                        Issue(
+                            "warn",
+                            slug,
+                            f"guardrail {key} relaxed to '{value}' (default '{_GUARDRAIL_DEFAULTS[key]}') — "
+                            f"agent steps will run with a weaker safety posture",
+                        )
+                    )
     return issues
 
 

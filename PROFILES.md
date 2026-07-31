@@ -54,6 +54,10 @@ that.
 | runtime dataflow (`$var`) | ✍️ `out=`/`in=` | ⚠️ entity/session-scoping | 📦 `__var__` | ❌ |
 | `loop` (`while:`) | ✍️ `while:` | 🛣️ use bounded agent iteration | 📦 `while-condition` | ❌ |
 | `subplaybook` (`run:`) | ✍️ `run:` | 🛣️ launch sub-hunts separately | 📦 `playbook-action` | ❌ |
+| **guardrails** (§8.1) | ✍️ frontmatter, default-on | ✅ enforced | 📦 `x-hunt.guardrails` * | ❌ |
+| `unavailable:` branch | ✍️ `unavailable:` | ⚠️ routed as indeterminate | 📦 `on_unavailable` * | 📄 |
+| ordinal confidence | ✍️ `confidence: high` | ✅ | 📦 `x-org-fuzzy-condition` * | 📄 |
+| **run results** (§12) | ✍️ emitted, not authored | ✅ emits | ❌ no CACAO equivalent | ❌ |
 | **hypothesis** | ✍️ frontmatter | ✅ first-class | 📦 `x-hunt` * | 📄 |
 | **ATT&CK techniques** | ✍️ `labels:` | ✅ first-class | 📦 `x-hunt` * | 📄 |
 | **data requirements** | ✍️ derived from `targets:` | ✅ pre-launch check | 📦 `x-hunt` * | 📄 |
@@ -110,12 +114,25 @@ is the native substitution.
 agent the tenant runs for that step (Scout by default). The format never assumes
 Scout; Huntbase just happens to ship one.
 
+**Guardrails (§8.1).** A profile must state whether it *enforces* the safety
+posture or merely records it — claiming a property you don't enforce is worse
+than declaring the gap. Huntbase enforces `telemetry: untrusted` (tool output is
+passed as data, never merged into the agent's instructions) and
+`missing_data: not_benign` (a step whose source is unavailable routes the
+`unavailable:` branch rather than falling through). `evidence:
+citation_required` and `claims: no_unsupported` are enforced at result
+validation (§12) rather than during execution.
+
 **Documented substitutions (⚠️).**
 - **Runtime `$var` dataflow** → Huntbase v1 has launch params + session/entity
   scoping, not named runtime binding. An agent step extracts entities; downstream
   queries are session-scoped to them. The importer lints `in/out=$var` and
   applies this fallback.
 - **`switch:`** → compiled to chained binary `checkpoint`s.
+- **`unavailable:`** → the node graph carries one `default` branch, so an
+  `unavailable:` edge is materialised as `default` alongside `indeterminate:`.
+  The distinction survives in the step config and in run results, but the runtime
+  routes both to the same successor unless they already differ.
 
 **Unsupported (❌, lint & reject):** `while:` loops and inline `subplaybook`
 execution. (Use bounded `agent` iteration; launch sub-hunts separately.)

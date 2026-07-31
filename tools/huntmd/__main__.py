@@ -17,6 +17,7 @@ from pathlib import Path
 import yaml
 
 from huntmd.cacao import cacao_to_markdown, markdown_to_cacao
+from huntmd.results import is_result_document, validate_result
 from huntmd.core import (
     ConversionError,
     definition_to_markdown,
@@ -78,7 +79,27 @@ def _cmd_convert(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate(args: argparse.Namespace) -> int:
-    text = Path(args.file).read_text(encoding="utf-8")
+    path = Path(args.file)
+    text = path.read_text(encoding="utf-8")
+
+    # A run result is YAML/JSON with a `hunt_result` root — lint it as a result
+    # (SPEC §12) rather than trying to parse it as a hunt.
+    if not _looks_like_markdown(path, text):
+        try:
+            doc = json.loads(text) if path.suffix.lower() == ".json" else yaml.safe_load(text)
+        except (json.JSONDecodeError, yaml.YAMLError) as exc:
+            print(f"error: could not parse {path}: {exc}", file=sys.stderr)
+            return 2
+        if is_result_document(doc):
+            issues = validate_result(doc)
+            for issue in issues:
+                print(str(issue), file=sys.stderr)
+            if not issues:
+                print("ok: no issues", file=sys.stderr)
+            return 1 if any(i.level == "error" for i in issues) else 0
+        print("error: not a hunt.md or a run result (expected 'hunt_result')", file=sys.stderr)
+        return 2
+
     issues = validate_markdown(text, profile=args.profile, max_tlp=args.max_tlp)
     errors = [i for i in issues if i.level == "error"]
     for issue in issues:
@@ -102,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("-o", "--output", help="write to file instead of stdout")
     c.set_defaults(func=_cmd_convert)
 
-    v = sub.add_parser("validate", help="lint a hunt.md")
+    v = sub.add_parser("validate", help="lint a hunt.md or a run result")
     v.add_argument("file")
     v.add_argument(
         "--profile",

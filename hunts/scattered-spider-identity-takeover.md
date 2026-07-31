@@ -7,7 +7,7 @@ labels:
   - attack.t1219        # remote access software
   - attack.t1114.002    # remote email collection
   - attack.t1484.002    # domain trust modification (rogue federation)
-tlp: amber
+tlp: green            # derived from public advisories; no org-specific detail
 severity: high
 hypothesis: >
   Scattered Spider-style actors have socially engineered our helpdesk to reset
@@ -132,9 +132,10 @@ OfficeActivity
 ```
 
 ## assess-takeover
-if~: "taken together, the correlated evidence, federation changes, and IR-surveillance activity indicate an active identity takeover consistent with AA23-320A rather than benign IT activity" (confidence >= 0.75, judge=hunter)
+if~: "taken together, the correlated evidence, federation changes, and IR-surveillance activity indicate an active identity takeover consistent with AA23-320A rather than benign IT activity" (confidence: high, judge=hunter)
 then: → contain
 indeterminate: → manual-review
+unavailable: → manual-review          # federation or IR-channel logs missing: escalate, never close
 else: → close-with-notes
 
 ## contain

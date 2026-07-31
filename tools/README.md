@@ -36,6 +36,12 @@ huntmd convert  some-playbook.json -o hunts/imported.md
 # lint against a profile (default: huntbase; 'format' = neutral spec; 'cacao' = interchange)
 huntmd validate hunts/my-hunt.md
 huntmd validate hunts/my-hunt.md --profile format
+
+# refuse to publish anything above a sharing level (public repos use green)
+huntmd validate hunts/my-hunt.md --max-tlp green
+
+# lint a run result (SPEC §12) — detected by its `hunt_result` root
+huntmd validate results/2026-07-31-kerberoasting.yaml
 ```
 
 `validate` exits non-zero if there are **errors** (warnings don't fail). It
@@ -45,6 +51,15 @@ agent steps, fuzzy conditions with no `indeterminate:` branch, and — for the
 sub-playbook `run:`, `switch:`, runtime `$var` dataflow) with the substitution
 it will apply. The `cacao` profile adds no restrictions of its own: every
 construct exports, so a hunt clean at `format` level is clean for interchange.
+
+It also enforces the v0.5 safety rules: guardrail keys and values (SPEC §8.1),
+a warning on any guardrail relaxed from its default, a warning on numeric `if~:`
+confidence (prefer ordinal), and an error when `unavailable: → end` would close a
+hunt on telemetry it never examined.
+
+For a **run result**, it checks the controlled vocabularies plus the three rules
+with teeth (SPEC §12.2): a `benign` disposition needs supporting evidence, an
+explanation needs a citation, and an unexamined step can't be assessed benign.
 
 ## What it targets
 
@@ -90,4 +105,5 @@ would write its own adapter over the same parsed graph.
 |---|---|
 | `huntmd/core.py` | parser, IR, Huntbase definition emitter (+ inverse), IR → markdown, linter |
 | `huntmd/cacao.py` | CACAO v2 export **and** CACAO v1.x/v2.0 import, over the same IR |
+| `huntmd/results.py` | run-result vocabularies + validation (SPEC §12) |
 | `huntmd/__main__.py` | CLI |

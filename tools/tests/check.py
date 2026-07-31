@@ -111,6 +111,112 @@ report(
     any(i.level == "error" and "no 'tlp:'" in i.message for i in validate_markdown(unmarked, profile="format", max_tlp="green")),
 )
 
+print("\nguardrails (SPEC §8.1)")
+base = "---\ntlp: green\nhypothesis: x\n{extra}---\n\n# t\n\n## look\n```agent target=a\nobjective: o\ntools: [a]\nmax_iterations: 2\n```\n"
+from huntmd.core import effective_guardrails  # noqa: E402
+
+report(
+    "defaults apply when no block is declared",
+    effective_guardrails({}) == {
+        "telemetry": "untrusted",
+        "evidence": "citation_required",
+        "missing_data": "not_benign",
+        "claims": "no_unsupported",
+    },
+)
+relaxed = validate_markdown(base.format(extra="guardrails: { telemetry: trusted }\n"), profile="format")
+report(
+    "relaxing a guardrail warns",
+    any(i.level == "warn" and "relaxed" in i.message for i in relaxed),
+)
+bad_key = validate_markdown(base.format(extra="guardrails: { telemetryy: trusted }\n"), profile="format")
+report("unknown guardrail key is an error", any(i.level == "error" and "unknown guardrail" in i.message for i in bad_key))
+bad_val = validate_markdown(base.format(extra="guardrails: { telemetry: whatever }\n"), profile="format")
+report("invalid guardrail value is an error", any(i.level == "error" and "not in" in i.message for i in bad_val))
+report(
+    "guardrails reach the runtime definition",
+    markdown_to_definition(base.format(extra=""))["hunt"]["meta"].get("guardrails", {}).get("telemetry") == "untrusted",
+)
+report(
+    "guardrails travel with the CACAO export",
+    markdown_to_cacao(base.format(extra=""))["x_hunt"]["guardrails"]["telemetry"] == "untrusted",
+)
+
+print("\nconfidence + unavailable (SPEC §7.2)")
+fuzzy = (
+    "---\ntlp: green\nhypothesis: x\n---\n\n# t\n\n## judge\n"
+    'if~: "looks bad" (confidence: {conf}, judge=a)\n'
+    "then: → act\nindeterminate: → review\n{unavail}else: → close\n\n"
+    "## act\n```manual target=a\nx\n```\n\n## review\n```manual target=a\nx\n```\n\n## close\n```manual target=a\nx\n```\n"
+)
+pb_ordinal = parse_markdown(fuzzy.format(conf="high", unavail=""))
+report("ordinal confidence parses", pb_ordinal.steps[0].confidence == "high")
+report("judge parses alongside it", pb_ordinal.steps[0].judge == "a")
+numeric_md = fuzzy.format(conf="high", unavail="").replace("confidence: high", "confidence >= 0.9")
+report(
+    "numeric confidence warns (not calibrated)",
+    any(i.level == "warn" and "not calibrated" in i.message for i in validate_markdown(numeric_md, profile="format")),
+)
+report(
+    "invalid ordinal is an error",
+    any(i.level == "error" for i in validate_markdown(fuzzy.format(conf="very-high", unavail=""), profile="format")),
+)
+with_unavail = fuzzy.format(conf="high", unavail="unavailable: → review\n")
+report(
+    "unavailable: routes to a real step",
+    any(e.branch == "on_unavailable" for e in parse_markdown(with_unavail).edges),
+)
+report(
+    "unavailable: → end is rejected under missing_data: not_benign",
+    any(
+        i.level == "error" and "never examined" in i.message
+        for i in validate_markdown(fuzzy.format(conf="high", unavail="unavailable: → end\n"), profile="format")
+    ),
+)
+report(
+    "unavailable: survives md -> CACAO -> md",
+    any(e.branch == "on_unavailable" for e in parse_markdown(cacao_to_markdown(markdown_to_cacao(with_unavail))).edges),
+)
+
+print("\nrun results (SPEC §12)")
+from huntmd.results import validate_result  # noqa: E402
+
+good = {
+    "hunt_result": {
+        "hunt": "k",
+        "run": "r1",
+        "disposition": "benign",
+        "confidence": "high",
+        "evidence_summary": {"benign_supporting": ["scheduled rotation job explains the bursts"]},
+        "step_results": [
+            {"step": "triage", "answer_status": "matched", "assessment": "benign", "explanation": "e", "evidence": [{"step": "q"}]}
+        ],
+    }
+}
+report("a well-formed result passes", not [i for i in validate_result(good) if i.level == "error"])
+
+import copy  # noqa: E402
+
+unsupported = copy.deepcopy(good)
+unsupported["hunt_result"]["evidence_summary"] = {"benign_supporting": []}
+report(
+    "benign with no supporting evidence is rejected",
+    any("supported explanation" in i.message for i in validate_result(unsupported)),
+)
+uncited = copy.deepcopy(good)
+uncited["hunt_result"]["step_results"][0].pop("evidence")
+report("explanation without citation is rejected", any("citation" in i.message for i in validate_result(uncited)))
+unexamined = copy.deepcopy(good)
+unexamined["hunt_result"]["step_results"][0].update({"answer_status": "not_applicable", "assessment": "benign"})
+report(
+    "unexamined telemetry cannot be called benign",
+    any("not evidence of benignity" in i.message for i in validate_result(unexamined)),
+)
+report(
+    "bad vocabulary is rejected",
+    any("not in" in i.message for i in validate_result({"hunt_result": {"hunt": "k", "disposition": "probably-fine"}})),
+)
+
 print()
 if failures:
     print(f"FAILED: {len(failures)} check(s) — {', '.join(failures[:5])}")

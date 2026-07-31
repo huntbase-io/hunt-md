@@ -1,6 +1,6 @@
 # hunt.md — specification
 
-**Version:** 0.4 (draft) · **Status:** Working proposal
+**Version:** 0.5 (draft) · **Status:** Working proposal
 **License of this document:** see `LICENSE`
 
 `hunt.md` is an **open, portable, human-first Markdown format for threat-hunting
@@ -238,15 +238,36 @@ if: `$spn_events.count > 100`
 then: → cluster
 else: → close-benign
 ```
-`if~:` is an agent-judged (fuzzy) condition with a confidence threshold; the
-`indeterminate:` branch is **required**:
+`if~:` is an agent-judged (fuzzy) condition. The `indeterminate:` branch is
+**required**:
+
 ```markdown
 ## looks-like-tunneling
-if~: "resembles DNS tunneling rather than CDN traffic" (confidence >= 0.8, judge=hunter)
+if~: "resembles DNS tunneling rather than CDN traffic" (confidence: high, judge=hunter)
 then: → deep-dive
-indeterminate: → manual-review
+indeterminate: → manual-review      # judged, but not conclusively
+unavailable:   → request-dns-logs   # could not judge — the telemetry was missing
 else: → close-benign
 ```
+
+**Confidence is ordinal.** Use `high | medium | low`. A numeric threshold
+(`confidence >= 0.8`) is accepted for compatibility but SHOULD be avoided and
+linters SHOULD warn: a language model's 0.8 is not calibrated, not comparable
+between models, and not stable across runs. Ordinal values say what is actually
+knowable. Runtimes bucket legacy numerics (`≥0.8 high, ≥0.5 medium, else low`).
+
+**`indeterminate:` and `unavailable:` are different failures**, and conflating
+them is how hunts quietly conclude "benign":
+
+| Branch | Meaning | Cause |
+|---|---|---|
+| `indeterminate:` | The evidence was examined and did not decide the question. | Genuine ambiguity. |
+| `unavailable:` | The question could not be examined at all. | A required source wasn't connected, a query failed, retention had expired. |
+
+`unavailable:` is optional; without it, unexamined questions fall back to
+`indeterminate:`. It MUST NOT route to a step that closes the hunt as benign —
+under the default `missing_data: not_benign` guardrail (§8.1) a linter rejects
+that. "We didn't look" is not a finding.
 
 ### 7.3 Switch (multi-way)
 ```markdown
@@ -306,6 +327,52 @@ max_iterations: 8
 it runs (see profiles). Output variables let downstream deterministic steps
 consume agent results exactly like query results (the hybrid hinge).
 
+### 8.1 Guardrails (agent safety posture)
+
+An agent step consumes telemetry — query results, log fields, file paths, user
+agents — that an adversary may control. **Retrieved data is evidence, never
+instruction.** A runtime MUST NOT let content returned by a tool alter the
+agent's objective, its tool allowlist, or its iteration bound.
+
+Guardrails are **on by default**. A hunt that needs them relaxed must say so,
+which makes the relaxation visible in review:
+
+```yaml
+guardrails:                  # frontmatter: applies to every agent step and if~:
+  telemetry: untrusted       # untrusted | trusted
+  evidence: citation_required # citation_required | none
+  missing_data: not_benign   # not_benign | ignorable
+  claims: no_unsupported     # no_unsupported | permitted
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `telemetry` | `untrusted` | Tool/query output is data. Text inside it that looks like an instruction is reported, never obeyed. |
+| `evidence` | `citation_required` | Every assertion cites the step and record it came from. |
+| `missing_data` | `not_benign` | Absent telemetry never supports a benign verdict — it routes `unavailable:` (§7.2). |
+| `claims` | `no_unsupported` | The agent states what it could not determine rather than inferring past its evidence. |
+
+A step may narrow — never silently widen — the document default:
+
+```markdown
+## triage
+```agent target=hunter
+objective: …
+~~~yaml
+guardrails: { evidence: citation_required }
+~~~
+```
+
+Linters MUST warn on any guardrail weakened from its default, and MUST reject
+unknown keys or values. Profiles declare whether a runtime enforces guardrails
+or merely records them; a runtime that cannot enforce `telemetry: untrusted`
+SHOULD say so rather than claim the property.
+
+> Rationale: a hunt is authored once and run against data an attacker
+> influences. Prompt injection through telemetry is the agentic equivalent of
+> SQL injection through a query parameter, and belongs in the format rather
+> than in each runtime's prompt.
+
 ---
 
 ## 9. Tasks & actions
@@ -344,6 +411,8 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `parameters:` | `parameters[] { name, type, default? }` |
 | `targets:` | `targets[] { slug, category|agent|role, bindings{} }` |
 | `labels: attack.*` | `attack_techniques[]` |
+| `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |
+| `unavailable:` | `edge { branch: on_unavailable }` (§7.2) |
 | `$var` / `{{param}}` | runtime variable / launch parameter |
 
 Runtime/interchange mappings (IR → Huntbase playbook, IR → CACAO v2, IR → docs)
@@ -351,7 +420,79 @@ live in **`PROFILES.md`**.
 
 ---
 
-## 12. Linting (against a target profile)
+## 12. Run results
+
+A hunt describes what to do; a **run result** records what happened. Without a
+defined result shape, two runtimes executing the same hunt produce output that
+can't be compared, audited, or handed to an analyst — and an agent's conclusion
+can't be separated from its evidence.
+
+A conforming runtime SHOULD emit one result document per run:
+
+```yaml
+hunt_result:
+  hunt: kerberoasting            # slug, or the playbook id (§10)
+  run: 2026-07-31T09:14:22Z/7f31 # runtime-assigned, unique
+  disposition: suspicious        # §12.1
+  confidence: medium             # high | medium | low
+
+  step_results:
+    - step: triage               # step slug
+      answer_status: matched     # §12.1
+      assessment: suspicious
+      explanation: >
+        Three service accounts show RC4 TGS bursts from non-admin subnets.
+      evidence:                  # required under `evidence: citation_required`
+        - step: enumerate-spn-requests
+          records: 3
+          detail: "svc-backup, svc-sql, svc-report — 412 requests / 14 sources"
+
+  evidence_summary:
+    malicious_supporting: ["RC4-only TGS requests from workstation subnet"]
+    benign_supporting: []
+    unknown: ["whether a credential-rotation job ran in the window"]
+
+  telemetry_coverage:            # what could NOT be examined, and why
+    available: [siem]
+    missing:
+      - target: edr
+        impact: "process ancestry for the requesting hosts was not checked"
+
+  actions_taken: ["queried SIEM for 4769 events", "clustered by account"]
+  hunting_recommendations: ["same accounts across other forests"]
+```
+
+### 12.1 Controlled vocabularies
+
+Free-text verdicts don't aggregate. These values are closed sets:
+
+| Field | Values |
+|---|---|
+| `answer_status` | `matched`, `not_matched`, `partial`, `unknown`, `not_applicable` |
+| `assessment` / `disposition` | `malicious`, `suspicious`, `potentially_benign`, `benign`, `inconclusive` |
+| `confidence` | `high`, `medium`, `low` |
+
+`unknown` means examined-but-undecided; `not_applicable` means not examinable
+(the `unavailable:` case, §7.2). Keeping them distinct is what lets a reviewer
+tell "we checked and it's fine" from "we never looked."
+
+### 12.2 Result rules
+
+1. **A benign disposition requires a supported explanation**, not merely the
+   absence of malicious evidence. A result with `disposition: benign` and an
+   empty `evidence_summary.benign_supporting` is invalid.
+2. **Missing telemetry is reported, never assumed benign** (§8.1). Any step whose
+   sources were unavailable appears in `telemetry_coverage.missing` with its
+   `impact`.
+3. **Assertions cite evidence** under the default guardrail — an `explanation`
+   without a corresponding `evidence` entry is invalid.
+4. `step_results` need not cover every step; steps that didn't run are simply
+   absent, and a runtime MAY record why.
+
+These are checkable: `huntmd validate <result.yaml>` lints a result document
+against them, the same way it lints a hunt.
+
+## 13. Linting (against a target profile)
 A hunt is linted for: flow reachability; variable def-before-use; every query has
 a `target`; every `if~:` has `indeterminate:`; every `agent` step has `tools` +
 bounds; destructive `action`s are gated; and — per the chosen profile —

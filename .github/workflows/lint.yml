@@ -39,6 +39,16 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Lint example run results
+        run: |
+          status=0
+          for f in examples/results/*.yaml; do
+            echo "::group::$f"
+            huntmd validate "$f" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
       - name: Regression checks (conversion + exact CACAO round-trip)
         run: python tools/tests/check.py
 

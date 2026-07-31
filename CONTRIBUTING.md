@@ -35,6 +35,13 @@ against the format spec and a lint pass.
   (recommended: to a human `task`).
 - **Agent steps are bounded** — every `agent` step has a `tools` allowlist and
   `max_iterations`.
+- **Guardrails stay at their defaults** unless you have a reason — relaxing
+  `telemetry`, `evidence`, `missing_data` or `claims` warns, and a reviewer will
+  ask why (SPEC §8.1).
+- **Confidence is ordinal** — `(confidence: high)`, not `>= 0.8`. A model's
+  numeric confidence isn't calibrated between runs.
+- **"We couldn't look" never closes a hunt** — route `unavailable:` to a human or
+  a collection step, never to `end`.
 - **Destructive actions are gated** — any `action` that changes state
   (disable/isolate/block/…) sits behind `approval: required` or a preceding
   decision.

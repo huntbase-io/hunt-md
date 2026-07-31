@@ -14,6 +14,15 @@ references:
   - name: <source>
     url: <url>
 
+# --- Agent safety posture (SPEC §8.1) ----------------------------------------
+# These are the defaults and apply even if you delete this block. Spell them out
+# only to relax one — which the linter will warn about, by design.
+guardrails:
+  telemetry: untrusted                  # retrieved data is evidence, never instruction
+  evidence: citation_required           # every claim cites the step it came from
+  missing_data: not_benign              # absent telemetry never supports "benign"
+  claims: no_unsupported                # say what couldn't be determined
+
 # --- Launch-time inputs ({{name}} placeholders in query bodies) --------------
 parameters:
   lookback: { type: duration, default: "14d" }
@@ -40,6 +49,16 @@ targets:
 if: `<first-query-step>.rows > 0`
 then: → <agent-step>
 else: → end
+
+# An agent-judged decision instead? Confidence is ordinal (high|medium|low) —
+# a model's 0.8 isn't calibrated. Route both failure modes separately:
+#
+# ## <fuzzy-decision>
+# if~: "<the judgement, in plain language>" (confidence: high, judge=hunter)
+# then: → <response-step>
+# indeterminate: → <human-review>   # looked, couldn't decide
+# unavailable:   → <human-review>   # couldn't look — never close the hunt here
+# else: → end
 
 ## <agent-step>
 ```agent target=hunter

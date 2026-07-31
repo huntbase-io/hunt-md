@@ -1,0 +1,73 @@
+# A worked run result for hunts/kerberoasting.md (SPEC §12).
+#
+# Lint it the same way you lint a hunt:
+#     huntmd validate examples/results/kerberoasting-run.yaml
+#
+# Note what this example deliberately shows: the hunt reached `suspicious`, not
+# `benign`, and it records that EDR was never consulted. Under the default
+# guardrails a verdict can't lean on telemetry nobody looked at.
+
+hunt_result:
+  hunt: kerberoasting
+  run: 2026-07-31T09:14:22Z/7f31
+  disposition: suspicious
+  confidence: medium
+
+  step_results:
+    - step: enumerate-spn-requests
+      answer_status: matched
+      assessment: suspicious
+      explanation: >
+        Three service accounts show RC4-only TGS bursts sourced from the
+        workstation VLAN rather than the admin VLAN.
+      evidence:
+        - step: enumerate-spn-requests
+          records: 3
+          detail: "svc-backup (412 req / 14 srcs), svc-sql (96 / 3), svc-report (88 / 2)"
+
+    - step: check-volume
+      answer_status: matched
+      assessment: suspicious
+      explanation: Request volume exceeded the threshold, so triage proceeded.
+      evidence:
+        - step: enumerate-spn-requests
+          detail: "596 total 4769 events with ticket encryption 0x17"
+
+    - step: triage
+      answer_status: partial
+      assessment: suspicious
+      explanation: >
+        The burst pattern and non-admin source subnets are consistent with
+        kerberoasting, but no credential-rotation change record was found that
+        would explain the activity benignly. Host process ancestry could not be
+        checked, so an approved scanner remains possible.
+      evidence:
+        - step: enumerate-spn-requests
+          detail: "svc-backup requested from 14 distinct workstations in 40 minutes"
+
+  evidence_summary:
+    malicious_supporting:
+      - RC4-only TGS requests for accounts that normally negotiate AES
+      - request sources outside the administrative VLAN
+    benign_supporting: []
+    unknown:
+      - whether an approved vulnerability scanner ran in the window
+      - whether a credential-rotation job touched these accounts
+
+  telemetry_coverage:
+    available:
+      - siem
+    missing:
+      - target: edr
+        impact: >
+          Process ancestry for the requesting hosts was not examined, so an
+          approved scanner could not be ruled out as the source.
+
+  actions_taken:
+    - queried SIEM for event 4769 with ticket encryption 0x17 over 14 days
+    - clustered requests by account and source address
+    - checked change records for credential rotation on the flagged accounts
+
+  hunting_recommendations:
+    - same accounts across other forests and trusted domains
+    - other accounts requested by the same 14 source workstations

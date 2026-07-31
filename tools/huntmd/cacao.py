@@ -23,7 +23,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from huntmd.core import ConversionError, Edge, Playbook, Step, parse_markdown
+from huntmd.core import ConversionError, Edge, Playbook, Step, effective_guardrails, parse_markdown
 
 CACAO_SPEC_VERSION = "cacao-2.0"
 
@@ -387,7 +387,12 @@ def _workflow(pb: Playbook, pb_uuid: uuid.UUID, target_ids: dict[str, str]) -> t
             if s.fuzzy:
                 fuzzy: dict[str, Any] = {"predicate": s.condition or ""}
                 if s.confidence is not None:
-                    fuzzy["confidence_threshold"] = s.confidence
+                    # Ordinal is the format's preferred form (SPEC §7.2); a
+                    # numeric threshold is carried verbatim so it round-trips.
+                    if isinstance(s.confidence, (int, float)):
+                        fuzzy["confidence_threshold"] = s.confidence
+                    else:
+                        fuzzy["confidence"] = s.confidence
                 if s.judge and s.judge in target_ids:
                     fuzzy["judge"] = target_ids[s.judge]
                 elif s.judge:
@@ -395,6 +400,11 @@ def _workflow(pb: Playbook, pb_uuid: uuid.UUID, target_ids: dict[str, str]) -> t
                 indeterminate = branch_of(s.slug, "default")
                 if indeterminate:
                     fuzzy["on_indeterminate"] = indeterminate
+                unavailable = branch_of(s.slug, "on_unavailable")
+                if unavailable:
+                    fuzzy["on_unavailable"] = unavailable
+                if s.unavailable_to_end:
+                    fuzzy["on_unavailable"] = [end_id]
                 step["x_org_fuzzy_condition"] = fuzzy
 
         elif ctype == "switch-condition":
@@ -491,7 +501,9 @@ def playbook_to_cacao(pb: Playbook, *, created: str | None = None) -> dict[str, 
         playbook["target_definitions"] = targets
 
     # x-hunt: what makes a CACAO library queryable as a *hunt* catalog (PROFILES §2).
-    x_hunt: dict[str, Any] = {"determinism": _determinism(pb)}
+    # Guardrails travel with the playbook: a consumer that executes agent steps
+    # needs the safety posture, not just the workflow (SPEC §8.1).
+    x_hunt: dict[str, Any] = {"determinism": _determinism(pb), "guardrails": effective_guardrails(pb.meta)}
     if hypothesis:
         x_hunt["hypothesis"] = str(hypothesis).strip()
     if _attack_techniques(pb.meta):
@@ -722,7 +734,7 @@ def _import_step(  # noqa: C901 - one dispatch per CACAO step type
         if isinstance(fuzzy, dict) and fuzzy:
             step.fuzzy = True
             step.condition = str(fuzzy.get("predicate") or step.condition)
-            step.confidence = fuzzy.get("confidence_threshold")
+            step.confidence = fuzzy.get("confidence") or fuzzy.get("confidence_threshold")
             judge = fuzzy.get("judge")
             step.judge = id_to_slug.get(str(judge), str(judge)) if judge else None
         cases = raw.get("cases")
@@ -797,6 +809,7 @@ def cacao_to_playbook(defn: Any) -> Playbook:
             fuzzy = raw.get("x_org_fuzzy_condition")
             if isinstance(fuzzy, dict):
                 add(fuzzy.get("on_indeterminate"), "default")
+                add(fuzzy.get("on_unavailable"), "on_unavailable")
         elif ctype == "switch-condition":
             for targets in (raw.get("cases") or {}).values():
                 add(targets, "default")
@@ -937,6 +950,9 @@ def _import_frontmatter(src: dict[str, Any], pb: Playbook, known_vars: set[str])
     if not targets and used:
         targets = {slug: {"category": "unknown", "name": slug} for slug in sorted(used)}
     meta["targets"] = targets or {"source": {"category": "unknown", "name": "TODO: name the data source"}}
+
+    if isinstance(x_hunt.get("guardrails"), dict):
+        meta["guardrails"] = x_hunt["guardrails"]
 
     meta["x_cacao_source"] = {k: src[k] for k in ("id", "spec_version", "created", "created_by") if src.get(k)}
     return meta

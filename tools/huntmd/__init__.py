@@ -16,14 +16,20 @@ runtime can't execute are reported by `validate`.
 from huntmd.cacao import markdown_to_cacao, playbook_to_cacao
 from huntmd.core import (
     ConversionError,
+    effective_guardrails,
     definition_to_markdown,
     markdown_to_definition,
     parse_markdown,
     validate_markdown,
 )
 
+from huntmd.results import is_result_document, validate_result
+
 __all__ = [
     "ConversionError",
+    "effective_guardrails",
+    "is_result_document",
+    "validate_result",
     "definition_to_markdown",
     "markdown_to_cacao",
     "markdown_to_definition",
