@@ -264,6 +264,21 @@ report(
     any("not in" in i.message for i in validate_result({"hunt_result": {"hunt": "k", "disposition": "probably-fine"}})),
 )
 
+print("\nparser robustness + lint completeness")
+_BT, _BT4 = "`" * 3, "`" * 4
+# A ```` fence preserves an inner ``` instead of truncating the body.
+_fence = f"---\nhypothesis: x\ntlp: green\n---\n# t\n## do\n{_BT4}action target=t\n{_BT}\nkept\n{_BT}\n{_BT4}\n→ end\n"
+_do = next(s for s in parse_markdown(_fence).steps if s.slug == "do")
+report("nested fence preserves body (no truncation)", "kept" in _do.body)
+# Action gating: credit for a preceding decision; warn only without one.
+_gated = f"---\nhypothesis: x\ntlp: green\n---\n# t\n## d\nif: `x`\nthen: → a\nelse: → end\n## a\n{_BT}action target=t\nisolate\n{_BT}\n→ end\n"
+_bare = f"---\nhypothesis: x\ntlp: green\n---\n# t\n## a\n{_BT}action target=t\nisolate\n{_BT}\n→ end\n"
+report("action after a decision isn't flagged ungated", not any("not gated" in str(i) for i in validate_markdown(_gated, profile="format")))
+report("ungated action with no decision IS flagged", any("not gated" in str(i) for i in validate_markdown(_bare, profile="format")))
+# Variable def-before-use / undeclared parameter.
+_undecl = f"---\nhypothesis: x\ntlp: green\nparameters: {{lookback: {{type: duration}}}}\n---\n# t\n## q\n{_BT}kql target=s params=(d=nope)\nx {{{{d}}}}\n{_BT}\n→ end\n"
+report("undeclared parameter source is an error", any("not declared" in str(i) for i in validate_markdown(_undecl, profile="format") if i.level == "error"))
+
 print()
 if failures:
     print(f"FAILED: {len(failures)} check(s) — {', '.join(failures[:5])}")

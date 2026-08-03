@@ -267,12 +267,19 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
     while i < n:
         raw = lines[i]
         line = raw.strip()
-        # fenced ``` block
+        # fenced ``` block. CommonMark fence rule: the opening backtick run has a
+        # length; the block closes only on a line that is a bare backtick run of
+        # AT LEAST that length. So a body containing ``` is preserved by opening
+        # with a longer fence (````), instead of being silently truncated.
         if line.startswith("```"):
-            info = line[3:].strip()
+            fence_len = len(line) - len(line.lstrip("`"))
+            info = line[fence_len:].strip()
             j = i + 1
             block: list[str] = []
-            while j < n and not lines[j].strip().startswith("```"):
+            while j < n:
+                closing = lines[j].strip()
+                if closing and set(closing) == {"`"} and len(closing) >= fence_len:
+                    break
                 block.append(lines[j])
                 j += 1
             body = "\n".join(block)
@@ -885,12 +892,14 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     if max_tlp:
         issues += _check_tlp(pb, max_tlp)
     issues += _check_guardrails(pb)
+    issues += _check_variables(pb)
 
     # edges reference existing nodes
     for e in pb.edges:
         if e.to not in slugs:
             issues.append(Issue("error", e.frm, f"edge → '{e.to}' targets an unknown step"))
 
+    _decision_slugs = {s.slug for s in pb.steps if s.kind == "decision"}
     targeted = {e.to for e in pb.edges}
     for s in pb.steps:
         if s.kind == "query" and not s.target:
@@ -930,9 +939,15 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
                     )
                 )
         if s.kind == "action":
-            gated = s.attrs.get("approval") == "required"
+            # Gated = explicit approval OR reached only through a decision
+            # (SPEC §9: destructive actions sit behind approval OR a decision).
+            gated = s.attrs.get("approval") == "required" or any(
+                e.to == s.slug and e.frm in _decision_slugs for e in pb.edges
+            )
             if not gated:
-                issues.append(Issue("warn", s.slug, "action is not gated (approval: required)"))
+                issues.append(
+                    Issue("warn", s.slug, "action changes state but is not gated — add `approval: required` or a preceding decision")
+                )
         # reachability
         if s.slug not in targeted and not _is_root_ok(s, pb):
             issues.append(Issue("warn", s.slug, "step is unreachable (no incoming edge)"))
@@ -1012,6 +1027,53 @@ def _runtime_vars(s: Step) -> list[str]:
         if isinstance(v, list):
             vals += [str(x) for x in v if str(x).startswith("$")]
     return vals
+
+
+def _attr_list(step: Step, key: str) -> list[str]:
+    """A step attr that may be a list or a comma-string (`out=$a,$b`)."""
+    v = step.attrs.get(key)
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [t.strip() for t in v.split(",") if t.strip()]
+    if isinstance(v, list):
+        return [str(x) for x in v]
+    return [str(v)]
+
+
+def _out_vars(step: Step) -> set[str]:
+    return {v.lstrip("$") for v in _attr_list(step, "out") if v.startswith("$")}
+
+
+def _check_variables(pb: Playbook) -> list[Issue]:
+    """Def-before-use for `$var` dataflow, and declared-ness for `{{param}}`
+    sources (the rule CONTRIBUTING.md promises). Runs at every profile — it's a
+    portability/correctness check, independent of whether a runtime executes
+    `$var` binding natively."""
+    issues: list[Issue] = []
+    declared = set(pb.meta.get("parameters") or {})
+    produced: set[str] = set()
+    for s in pb.steps:
+        produced |= _out_vars(s)
+
+    defined: set[str] = set()
+    for s in pb.steps:
+        # A parameter source (params=(q=NAME) with no `$`) must be declared.
+        for src in s.params.values():
+            if not src.startswith("$") and src not in declared:
+                issues.append(Issue("error", s.slug, f"parameter '{src}' is not declared in frontmatter parameters:"))
+        # Runtime `$var` uses — from params, in=, context, and the condition.
+        used = {v.lstrip("$") for v in s.params.values() if v.startswith("$")}
+        used |= {v.lstrip("$") for v in _attr_list(s, "in") if v.startswith("$")}
+        used |= {v.lstrip("$") for v in _attr_list(s, "context") if v.startswith("$")}
+        used |= set(re.findall(r"\$(\w+)", s.condition or ""))
+        for v in sorted(used):
+            if v not in produced and v not in declared:
+                issues.append(Issue("error", s.slug, f"variable ${v} is used but never produced by an out="))
+            elif v not in defined and v not in declared:
+                issues.append(Issue("warn", s.slug, f"variable ${v} is used before it is produced"))
+        defined |= _out_vars(s)
+    return issues
 
 
 def _is_root_ok(step: Step, pb: Playbook) -> bool:
