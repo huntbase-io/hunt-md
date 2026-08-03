@@ -28,6 +28,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from huntmd.cacao import cacao_to_markdown, markdown_to_cacao  # noqa: E402
 from huntmd.core import (  # noqa: E402
+    definition_to_markdown,
     markdown_to_definition,
     parse_markdown,
     validate_markdown,
@@ -84,6 +85,52 @@ for path in hunts:
         key = drift[0]
         detail = f"{key} changed: {before[key]!r} -> {after[key]!r}"[:300]
     report(f"{path.name} round-trip", not drift, detail)
+
+print("\nround-trip — md -> definition -> md (the path Huntbase vendors)")
+_VALID_NODE_TYPES = {"query", "collection", "action", "checkpoint", "task", "analytic"}
+for path in hunts:
+    md = path.read_text(encoding="utf-8")
+    try:
+        defn = markdown_to_definition(md)
+    except Exception as exc:  # noqa: BLE001
+        report(f"{path.name} definition round-trip", False, f"{type(exc).__name__}: {exc}")
+        continue
+    # Shape: valid node types, parents reference existing nodes, no duplicate parents.
+    node_ids = {n.get("id") for n in defn["nodes"]}
+    shape_errs: list[str] = []
+    for n in defn["nodes"]:
+        if n.get("type") not in _VALID_NODE_TYPES:
+            shape_errs.append(f"{n.get('id')}: bad type {n.get('type')!r}")
+        pars = n.get("parents") or []
+        if len(pars) != len({(p.get("id"), p.get("branch"), p.get("kind")) for p in pars}):
+            shape_errs.append(f"{n.get('id')}: duplicate parents {pars!r}")
+        for p in pars:
+            if p.get("id") not in node_ids:
+                shape_errs.append(f"{n.get('id')}: parent {p.get('id')!r} missing")
+    report(f"{path.name} definition shape", not shape_errs, "; ".join(shape_errs[:2]))
+    # Fingerprint survives md -> definition -> md.
+    try:
+        before, after = fingerprint(md), fingerprint(definition_to_markdown(defn))
+    except Exception as exc:  # noqa: BLE001
+        report(f"{path.name} definition round-trip", False, f"{type(exc).__name__}: {exc}")
+        continue
+    # target/lang are best-effort on the definition inverse; the node graph
+    # (node kinds + edges incl. branch) must survive exactly. Parallel/group
+    # pseudo-steps aren't nodes and aren't regenerated (documented sugar loss),
+    # so compare only the six real node kinds.
+    _node_kinds = {"query", "collection", "agent", "decision", "task", "action"}
+    before_k = Counter({k: v for k, v in before["kinds"].items() if k in _node_kinds})
+    after_k = Counter({k: v for k, v in after["kinds"].items() if k in _node_kinds})
+    drift = []
+    if before_k != after_k:
+        drift.append("kinds")
+    if before["edges"] != after["edges"]:
+        drift.append("edges")
+    detail = ""
+    if drift:
+        key = drift[0]
+        detail = f"{key} changed: {before[key]!r} -> {after[key]!r}"[:300]
+    report(f"{path.name} definition round-trip", not drift, detail)
 
 print("\nexamples/cacao-import/ — reference conversions still valid")
 examples = sorted(p for p in (ROOT / "examples" / "cacao-import").glob("*.md") if p.name != "README.md")

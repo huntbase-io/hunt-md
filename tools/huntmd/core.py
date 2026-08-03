@@ -88,14 +88,35 @@ def bucket_confidence(value: Any) -> str | None:
     return "high" if n >= 0.8 else "medium" if n >= 0.5 else "low"
 
 
-def _str_representer(dumper: yaml.SafeDumper, data: str):
+def _str_representer(dumper, data: str):
     """Dump multi-line strings (queries, objectives) as readable literal blocks."""
     if "\n" in data:
         return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
     return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
 
-yaml.add_representer(str, _str_representer, Dumper=yaml.SafeDumper)
+class _BlockDumper(yaml.SafeDumper):
+    """Private dumper: block-style multi-line strings, scoped to this module.
+
+    Registered on a subclass (not the shared ``yaml.SafeDumper``) so importing
+    this module does NOT change YAML serialization for the rest of the process —
+    important when it's vendored into a larger service.
+    """
+
+
+_BlockDumper.add_representer(str, _str_representer)
+
+
+def dump_yaml(data, **kwargs) -> str:
+    """yaml.safe_dump equivalent using the module-private block dumper.
+
+    Public so the CLI (and vendoring hosts) can serialize a definition without
+    re-registering a global representer.
+    """
+    return yaml.dump(data, Dumper=_BlockDumper, **kwargs)
+
+
+_dump = dump_yaml  # internal alias
 _ARROW = re.compile(r"^(?:→|->)\s*(.+?)\s*$")
 _PLACEHOLDER = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 
@@ -497,7 +518,11 @@ def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
             entry["branch"] = e.branch
         if e.kind and e.kind != "sequence":
             entry["kind"] = e.kind
-        parents.setdefault(e.to, []).append(entry)
+        # Dedupe: e.g. two switch cases pointing at the same step would otherwise
+        # emit duplicate parent entries the runtime then ingests twice.
+        bucket = parents.setdefault(e.to, [])
+        if entry not in bucket:
+            bucket.append(entry)
 
     nodes: list[dict[str, Any]] = []
     for s in pb.steps:
@@ -600,7 +625,7 @@ _NATIVE_ATTRS = {
 def _fm_dump(meta: dict[str, Any]) -> str:
     ordered = {k: meta[k] for k in _FM_ORDER if k in meta}
     ordered.update({k: v for k, v in meta.items() if k not in ordered})
-    return yaml.safe_dump(ordered, sort_keys=False, default_flow_style=False, allow_unicode=True).strip()
+    return _dump(ordered, sort_keys=False, default_flow_style=False, allow_unicode=True).strip()
 
 
 def _info_string(s: Step) -> str:
@@ -649,7 +674,7 @@ def playbook_to_markdown(pb: Playbook) -> str:
         elif s.kind == "agent":
             directive = {k: s.attrs[k] for k in ("objective", "context", "tools", "success_criteria", "max_iterations") if k in s.attrs}
             directive.setdefault("objective", s.body.strip())
-            out += [f"```agent{info}", yaml.safe_dump(directive, sort_keys=False, allow_unicode=True).strip(), "```"]
+            out += [f"```agent{info}", _dump(directive, sort_keys=False, allow_unicode=True).strip(), "```"]
         elif s.kind in ("task", "action"):
             block = "manual" if s.kind == "task" else "action"
             out.append(f"```{block}{info}")
@@ -708,7 +733,7 @@ def playbook_to_markdown(pb: Playbook) -> str:
             out.append(s.body.rstrip())
 
         if extra:
-            out += ["~~~yaml", yaml.safe_dump(extra, sort_keys=False, allow_unicode=True).strip(), "~~~"]
+            out += ["~~~yaml", _dump(extra, sort_keys=False, allow_unicode=True).strip(), "~~~"]
 
         # Flow: document order carries the common case; emit an arrow only where
         # the successor isn't the next step in the document (SPEC §4.1).
@@ -738,7 +763,7 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
     hunt = defn.get("hunt") or {}
     meta = dict(hunt.get("meta") or {})
     out: list[str] = ["---"]
-    out.append(yaml.safe_dump(meta, sort_keys=False, default_flow_style=False).strip())
+    out.append(_dump(meta, sort_keys=False, default_flow_style=False).strip())
     out.append("---\n")
     out.append(f"# {hunt.get('name', 'Untitled hunt')}\n")
 
@@ -747,7 +772,15 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
     for node in defn["nodes"]:
         for p in node.get("parents") or []:
             children.setdefault(p.get("id", ""), []).append((node.get("id", ""), p.get("branch")))
-    _branch_kw = {"on_supports": "then", "on_refutes": "else", "default": "indeterminate"}
+    # Branch value → hunt.md keyword. Unknown branches fall back to
+    # `indeterminate` (never `then`/on_supports) so an unrecognized branch can't
+    # be silently routed to the positive/action arm.
+    _branch_kw = {
+        "on_supports": "then",
+        "on_refutes": "else",
+        "default": "indeterminate",
+        "on_unavailable": "unavailable",
+    }
 
     for node in defn["nodes"]:
         nid = node.get("id", "")
@@ -768,11 +801,23 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             out.append("```")
         elif ntype == "analytic":
             out.append("```agent")
-            out.append(yaml.safe_dump({k: cfg[k] for k in cfg if k != "body"}, sort_keys=False).strip())
+            out.append(_dump({k: cfg[k] for k in cfg if k != "body"}, sort_keys=False).strip())
             out.append("```")
         elif ntype == "checkpoint":
-            op = "if~:" if cfg.get("fuzzy") else "if:"
-            out.append(f"{op} `{cfg.get('condition', '')}`")
+            if cfg.get("switch_cases"):
+                out.append(f"switch: `{cfg.get('condition', '')}`")
+                for case in cfg["switch_cases"]:
+                    out.append(f'- "{case.get("value")}" → {case.get("to")}')
+            elif cfg.get("fuzzy"):
+                qual = []
+                if cfg.get("confidence"):
+                    qual.append(f"confidence: {cfg['confidence']}")
+                if cfg.get("judge"):
+                    qual.append(f"judge={cfg['judge']}")
+                suffix = f" ({', '.join(qual)})" if qual else ""
+                out.append(f'if~: "{cfg.get("condition", "")}"{suffix}')
+            else:
+                out.append(f"if: `{cfg.get('condition', '')}`")
         elif ntype == "action":
             tgt = f" target={cfg['target']}" if cfg.get("target") else ""
             out.append(f"```action{tgt}")
@@ -787,13 +832,16 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             out.append("```")
         # transitions
         kids = children.get(nid, [])
-        if ntype == "checkpoint":
+        is_switch = ntype == "checkpoint" and cfg.get("switch_cases")
+        if is_switch:
+            pass  # case list already emitted above
+        elif ntype == "checkpoint":
             for cid, branch in kids:
-                out.append(f"{_branch_kw.get(branch or 'default', 'then')}: → {cid}")
+                out.append(f"{_branch_kw.get(branch or 'default', 'indeterminate')}: → {cid}")
         else:
             for cid, _ in kids:
                 out.append(f"→ {cid}")
-        if not kids:
+        if not kids and not is_switch:
             out.append("→ end")
         out.append("")
     return "\n".join(out).rstrip() + "\n"

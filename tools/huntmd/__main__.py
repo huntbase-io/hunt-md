@@ -21,6 +21,7 @@ from huntmd.results import is_result_document, validate_result
 from huntmd.core import (
     ConversionError,
     definition_to_markdown,
+    dump_yaml,
     markdown_to_definition,
     validate_markdown,
 )
@@ -57,7 +58,7 @@ def _cmd_convert(args: argparse.Namespace) -> int:
             elif target == "json":
                 result = json.dumps(markdown_to_definition(text), indent=2)
             elif target == "yaml":
-                result = yaml.safe_dump(markdown_to_definition(text), sort_keys=False, default_flow_style=False)
+                result = dump_yaml(markdown_to_definition(text), sort_keys=False, default_flow_style=False)
             else:
                 raise ConversionError("Converting hunt.md → md is a no-op; use --to yaml|json|cacao.")
         elif args.to == "cacao":
