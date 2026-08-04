@@ -621,7 +621,7 @@ def _find_playbook(defn: Any) -> dict[str, Any]:
 
 
 def _role_from_description(description: Any) -> str | None:
-    m = re.match(r"\s*role:\s*(\S+)", str(description or ""))
+    m = re.match(r"role:\s*(\S+)", str(description or "").strip())
     return m.group(1) if m else None
 
 

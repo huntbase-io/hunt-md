@@ -235,7 +235,7 @@ def _iter_sections(body: str):
     header: tuple[int, str, str | None] | None = None
     pre: list[str] = []
     for line in body.splitlines():
-        m = re.match(r"^(#{2,3})\s+(.*)$", line)
+        m = re.match(r"^(#{2,3})\s(.*)$", line)
         if m:
             if header is not None:
                 yield (*header, cur or [])
@@ -413,7 +413,7 @@ def parse_markdown(text: str) -> Playbook:
         if item[0] == "__pre__":
             pre = item[1]
             # H1 title + description
-            h1 = re.search(r"^#\s+(.+)$", pre, re.M)
+            h1 = re.search(r"^#\s(.+)$", pre, re.M)
             if h1:
                 pb.name = h1.group(1).strip()
                 after = pre[h1.end() :].strip()
