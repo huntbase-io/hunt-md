@@ -132,6 +132,52 @@ for path in hunts:
         detail = f"{key} changed: {before[key]!r} -> {after[key]!r}"[:300]
     report(f"{path.name} definition round-trip", not drift, detail)
 
+print("\nsession-derived export — UUID ids must render as readable slugs")
+# A Huntbase session-derived definition carries DB UUIDs as node ids (not
+# authored slugs). The export must key headings + transitions off the label so
+# the document is legible and re-importable — regression for the UUID-heading bug.
+_U = [
+    "4d63af23-8d2e-429a-81b6-52ce5a1fd9a5",
+    "76a64083-16a5-4517-a07f-aa34e1859ace",
+    "7db3ca3a-d23e-4140-97f0-51fbc2b85522",
+]
+_derived_defn = {
+    "hunt": {"name": "Derived from session"},
+    "nodes": [
+        {"id": _U[0], "type": "query", "label": "Identify Keycloak Registrations",
+         "primitive_config": {"content": "SELECT 1", "dsl": "spl", "target": "siem"}},
+        {"id": _U[1], "type": "query", "label": "Detect Spoofed Attestation",
+         "primitive_config": {"content": "SELECT 2", "dsl": "spl", "target": "siem"},
+         "parents": [{"id": _U[0]}]},
+        {"id": _U[2], "type": "task", "label": "Consolidate Findings",
+         "config": {}, "parents": [{"id": _U[1]}]},
+    ],
+}
+_md = definition_to_markdown(_derived_defn)
+_headings = [ln[3:].strip() for ln in _md.splitlines() if ln.startswith("## ")]
+report(
+    "no UUID headings (slugs derived from labels)",
+    bool(_headings) and not any(h in _U for h in _headings),
+    f"headings={_headings}",
+)
+report(
+    "readable slug present",
+    "identify-keycloak-registrations" in _headings,
+    f"headings={_headings}",
+)
+_reparsed = parse_markdown(_md)
+report(
+    "edges survive UUID→slug export",
+    sorted((e.frm, e.to) for e in _reparsed.edges)
+    == [("detect-spoofed-attestation", "consolidate-findings"),
+        ("identify-keycloak-registrations", "detect-spoofed-attestation")],
+    f"edges={sorted((e.frm, e.to) for e in _reparsed.edges)}",
+)
+report(
+    "unset DSL is not fabricated as sqlite",
+    "```sqlite" not in _md and "```spl" in _md,
+)
+
 print("\nexamples/cacao-import/ — reference conversions still valid")
 examples = sorted(p for p in (ROOT / "examples" / "cacao-import").glob("*.md") if p.name != "README.md")
 for path in examples:

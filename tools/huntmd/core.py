@@ -764,6 +764,48 @@ def playbook_to_markdown(pb: Playbook) -> str:
 # --- emit: definition -> hunt.md (best-effort inverse) ----------------------
 
 
+def _slugify(text: str) -> str:
+    """Readable, stable step slug from a label — lowercase, non-alphanumerics
+    collapsed to a single ``-``, trimmed, capped so headings stay legible."""
+    s = re.sub(r"[^a-z0-9]+", "-", str(text).strip().lower()).strip("-")
+    return s[:60].rstrip("-")
+
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+
+
+def _slug_map(nodes: list[dict[str, Any]]) -> dict[str, str]:
+    """Map each node id → the slug used for its heading and transitions.
+
+    A hunt.md-authored definition already carries readable, possibly
+    group-qualified ids (``id == step.slug``); those are kept verbatim so the
+    round-trip is byte-stable. A **session-derived** definition carries DB
+    UUIDs, which make the export unreadable — for those we derive a slug from
+    the node's label (falling back to the primitive's label), dedup collisions
+    with a numeric suffix, and use it for both headings and transitions so the
+    graph stays legible and re-imports to a deterministic ``uuid5(slug)`` id."""
+    slug_by_id: dict[str, str] = {}
+    used: dict[str, int] = {}
+    # Reserve authored slugs first so a derived slug can't collide with one.
+    for node in nodes:
+        nid = node.get("id", "")
+        if nid and not _UUID_RE.match(nid):
+            slug_by_id[nid] = nid
+            used[nid] = 1
+    for node in nodes:
+        nid = node.get("id", "")
+        if nid in slug_by_id:
+            continue
+        label = node.get("label") or (node.get("primitive_config") or {}).get("label") or ""
+        base = _slugify(label) or nid
+        n = used.get(base, 0) + 1
+        used[base] = n
+        slug_by_id[nid] = base if n == 1 else f"{base}-{n}"
+    return slug_by_id
+
+
 def definition_to_markdown(defn: dict[str, Any]) -> str:
     if not isinstance(defn, dict) or "nodes" not in defn:
         raise ConversionError("Not a playbook definition (missing 'nodes').")
@@ -774,11 +816,16 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
     out.append("---\n")
     out.append(f"# {hunt.get('name', 'Untitled hunt')}\n")
 
-    # Invert parents → children (with branch) so flow is reconstructed.
+    slug_by_id = _slug_map(defn["nodes"])
+
+    # Invert parents → children (with branch) so flow is reconstructed. Keyed by
+    # the readable slug on both sides so headings and transitions line up.
     children: dict[str, list[tuple[str, str | None]]] = {}
     for node in defn["nodes"]:
+        child_slug = slug_by_id.get(node.get("id", ""), node.get("id", ""))
         for p in node.get("parents") or []:
-            children.setdefault(p.get("id", ""), []).append((node.get("id", ""), p.get("branch")))
+            parent_slug = slug_by_id.get(p.get("id", ""), p.get("id", ""))
+            children.setdefault(parent_slug, []).append((child_slug, p.get("branch")))
     # Branch value → hunt.md keyword. Unknown branches fall back to
     # `indeterminate` (never `then`/on_supports) so an unrecognized branch can't
     # be silently routed to the positive/action arm.
@@ -791,13 +838,18 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
 
     for node in defn["nodes"]:
         nid = node.get("id", "")
+        slug = slug_by_id.get(nid, nid)
         ntype = node.get("type", "query")
         cfg = node.get("config") or {}
-        out.append(f"## {nid}")
+        out.append(f"## {slug}")
         if ntype == "query":
             pc = node.get("primitive_config") or {}
             tgt = f" target={pc['target']}" if pc.get("target") else ""
-            out.append(f"```{pc.get('dsl', 'sqlite')}{tgt}")
+            # Emit the query's real DSL; if it's genuinely unset, use a bare
+            # fence rather than fabricating `sqlite` (which would silently
+            # re-import as a SQLite query). An empty info-string still parses
+            # back as a query.
+            out.append(f"```{pc.get('dsl') or ''}{tgt}")
             out.append(pc.get("content", "").rstrip())
             out.append("```")
         elif ntype == "collection":
@@ -814,7 +866,8 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             if cfg.get("switch_cases"):
                 out.append(f"switch: `{cfg.get('condition', '')}`")
                 for case in cfg["switch_cases"]:
-                    out.append(f'- "{case.get("value")}" → {case.get("to")}')
+                    to = slug_by_id.get(case.get("to"), case.get("to"))
+                    out.append(f'- "{case.get("value")}" → {to}')
             elif cfg.get("fuzzy"):
                 qual = []
                 if cfg.get("confidence"):
@@ -838,7 +891,7 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             out.append((cfg.get("instructions") or "").rstrip())
             out.append("```")
         # transitions
-        kids = children.get(nid, [])
+        kids = children.get(slug, [])
         is_switch = ntype == "checkpoint" and cfg.get("switch_cases")
         if is_switch:
             pass  # case list already emitted above
