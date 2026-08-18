@@ -56,13 +56,13 @@
         "uuid": "f91b430a-3dd8-5d15-9cf2-acb66adef3e3",
         "name": "threat-hunt-context",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "Metadata describing the purpose, methodology, and resourcing of a threat hunt. One instance per MISP event; corresponds to the Purpose and Equip sections of the hunt report.",
         "template_uuid": "6dec94ff-b74b-4cab-ad38-3d3c8308bdb3",
         "template_version": "1",
         "comment": "",
         "Attribute": [
           {
-            "uuid": "12d0080d-2e58-5759-9ca4-e05f6339db59",
+            "uuid": "75e5d53f-6928-53d4-be79-7c549566351c",
             "object_relation": "hunt-title",
             "type": "text",
             "category": "Other",
@@ -71,7 +71,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "1575f7cf-f318-51ff-924c-ec3438e9cdc1",
+            "uuid": "3dad8401-57a7-53cb-992e-4d500e8fdece",
             "object_relation": "purpose",
             "type": "text",
             "category": "Other",
@@ -80,7 +80,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "86bdb5c6-3992-5493-8750-06c073a33294",
+            "uuid": "30a66f58-10db-53b5-8498-c620bd817e80",
             "object_relation": "methodology",
             "type": "text",
             "category": "Other",
@@ -89,7 +89,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "5957a2b7-5925-58cd-9245-5e56bff9e5de",
+            "uuid": "8e3059a5-689d-50d7-8947-16004564f47c",
             "object_relation": "status",
             "type": "text",
             "category": "Other",
@@ -108,15 +108,6 @@
             "comment": "target: iam (category: iam)"
           },
           {
-            "uuid": "83fb3528-cc18-5612-b059-2e8d8e4038eb",
-            "object_relation": "tool",
-            "type": "text",
-            "category": "Other",
-            "value": "azure_log_analytics",
-            "to_ids": false,
-            "disable_correlation": true
-          },
-          {
             "uuid": "5139210e-912a-520b-9ea9-342dc47f6dd6",
             "object_relation": "data-source",
             "type": "text",
@@ -127,15 +118,6 @@
             "comment": "target: siem (category: siem)"
           },
           {
-            "uuid": "83fb3528-cc18-5612-b059-2e8d8e4038eb",
-            "object_relation": "tool",
-            "type": "text",
-            "category": "Other",
-            "value": "azure_log_analytics",
-            "to_ids": false,
-            "disable_correlation": true
-          },
-          {
             "uuid": "206ddc94-6b99-55c1-b28f-f94ad727f203",
             "object_relation": "data-source",
             "type": "text",
@@ -144,6 +126,15 @@
             "to_ids": false,
             "disable_correlation": true,
             "comment": "target: edr (category: endpoint)"
+          },
+          {
+            "uuid": "83fb3528-cc18-5612-b059-2e8d8e4038eb",
+            "object_relation": "tool",
+            "type": "text",
+            "category": "Other",
+            "value": "azure_log_analytics",
+            "to_ids": false,
+            "disable_correlation": true
           },
           {
             "uuid": "e8de447d-eadd-57b7-ab18-9df3fd310a15",
@@ -161,13 +152,13 @@
         "uuid": "9490d43a-3aeb-5540-97e2-51e7d7918cf0",
         "name": "threat-hunt-hypothesis",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "A single testable hypothesis from the Scope and Execute sections of a hunt: its scoping decision, targeted ATT&CK technique(s), and analytic reasoning. One instance per hypothesis.",
         "template_uuid": "4136cd18-3edd-49fb-90ba-24cbacacc662",
         "template_version": "1",
         "comment": "",
         "Attribute": [
           {
-            "uuid": "a4ba562e-c731-525e-a463-a2569c86b78f",
+            "uuid": "3de13e07-fd8a-5bfc-b781-eceb2f935866",
             "object_relation": "hypothesis-id",
             "type": "text",
             "category": "Other",
@@ -176,7 +167,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "9d20be48-7d58-521f-a651-931ab566dfa0",
+            "uuid": "6c1913fb-e614-5f1a-bf0d-6ab6583e3de4",
             "object_relation": "hypothesis",
             "type": "text",
             "category": "Other",
@@ -185,7 +176,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "5f072de3-2715-52b2-81fa-1bbc734c3174",
+            "uuid": "5ae45b96-ff1f-54fd-8c2a-ab63dcefaee6",
             "object_relation": "scope",
             "type": "text",
             "category": "Other",
@@ -230,7 +221,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "843d1798-018f-5665-b34e-386ba02d91f9",
+            "uuid": "445c4f40-876a-5ce5-b498-7b37065212c9",
             "object_relation": "analysis",
             "type": "text",
             "category": "Other",
@@ -239,7 +230,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "019e761b-7ab6-59f0-93e5-61ff19acfe68",
+            "uuid": "ca067575-56d5-54d7-9dc8-b917d3a7d5b9",
             "object_relation": "status",
             "type": "text",
             "category": "Other",
@@ -262,7 +253,7 @@
         "uuid": "6cfebae2-d541-54f8-bf73-f7c9747eb252",
         "name": "threat-hunt-query",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
         "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
         "template_version": "1",
         "comment": "hunt.md step `query-mfa-registrations`",
@@ -296,7 +287,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "3e095dd5-ad46-5852-8e52-9bae32f36d97",
+            "uuid": "d8bca367-90d4-5a95-aa47-45cefc41549f",
             "object_relation": "data-source",
             "type": "text",
             "category": "Other",
@@ -338,7 +329,7 @@
         "uuid": "8b68ed14-d3f7-56d4-bd0e-7b27a37db547",
         "name": "threat-hunt-query",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
         "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
         "template_version": "1",
         "comment": "hunt.md step `query-helpdesk-resets`",
@@ -372,7 +363,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "97642cb1-45ab-53ec-9742-59ba381244d3",
+            "uuid": "a13e5f20-59a1-5290-bdf9-18abfe59c079",
             "object_relation": "data-source",
             "type": "text",
             "category": "Other",
@@ -414,7 +405,7 @@
         "uuid": "18e753df-96b3-58fd-93c8-53430ffd452f",
         "name": "threat-hunt-query",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
         "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
         "template_version": "1",
         "comment": "hunt.md step `query-rmm-installs`",
@@ -448,7 +439,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "08ba7ff4-efcb-5cbe-976d-232e642c6b9f",
+            "uuid": "4b67b740-9769-5a00-be6d-db9079137ee3",
             "object_relation": "data-source",
             "type": "text",
             "category": "Other",
@@ -490,7 +481,7 @@
         "uuid": "2e71a6dd-3031-537a-9169-c13f6466f7ee",
         "name": "threat-hunt-query",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
         "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
         "template_version": "1",
         "comment": "hunt.md step `pivot-persistence/query-federation-changes`",
@@ -524,7 +515,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "32a12377-db16-5215-982d-f1f44153fc46",
+            "uuid": "0a9114a6-f42c-5a07-9a9c-c9a333a99425",
             "object_relation": "data-source",
             "type": "text",
             "category": "Other",
@@ -566,7 +557,7 @@
         "uuid": "75c22438-f750-5a21-82a3-905520b25af4",
         "name": "threat-hunt-query",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
         "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
         "template_version": "1",
         "comment": "hunt.md step `pivot-persistence/query-ir-surveillance`",
@@ -600,7 +591,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "acf0eed5-5bbc-5da5-b8d7-08d5e883fb07",
+            "uuid": "89115941-a70e-5ff1-b15f-657affb8297b",
             "object_relation": "data-source",
             "type": "text",
             "category": "Other",

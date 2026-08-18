@@ -56,13 +56,13 @@
         "uuid": "51dca00e-aa53-505d-8706-2ed881d7cbf5",
         "name": "threat-hunt-context",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "Metadata describing the purpose, methodology, and resourcing of a threat hunt. One instance per MISP event; corresponds to the Purpose and Equip sections of the hunt report.",
         "template_uuid": "6dec94ff-b74b-4cab-ad38-3d3c8308bdb3",
         "template_version": "1",
         "comment": "",
         "Attribute": [
           {
-            "uuid": "7ea1455f-59af-5093-8fd7-2637172b582f",
+            "uuid": "5275d3a3-5559-5648-922a-6b1cb4ede9a6",
             "object_relation": "hunt-title",
             "type": "text",
             "category": "Other",
@@ -71,7 +71,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "633ba068-9661-51d8-8ac5-b1b2efc155da",
+            "uuid": "fa45927a-eb87-5435-b4bf-1776a8c1c02d",
             "object_relation": "purpose",
             "type": "text",
             "category": "Other",
@@ -80,7 +80,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "6174fdfb-f60f-5291-a386-79c52a771e4a",
+            "uuid": "0b2165d6-3264-5ea8-a546-69b139a2a04d",
             "object_relation": "methodology",
             "type": "text",
             "category": "Other",
@@ -89,7 +89,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "6fefcab8-0d40-5c36-b3da-9683e884ac13",
+            "uuid": "7647860f-64ef-5771-8972-ca951d8cfef0",
             "object_relation": "status",
             "type": "text",
             "category": "Other",
@@ -114,13 +114,13 @@
         "uuid": "6e887bcc-364b-55a1-b42a-b01c67395d38",
         "name": "threat-hunt-hypothesis",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "A single testable hypothesis from the Scope and Execute sections of a hunt: its scoping decision, targeted ATT&CK technique(s), and analytic reasoning. One instance per hypothesis.",
         "template_uuid": "4136cd18-3edd-49fb-90ba-24cbacacc662",
         "template_version": "1",
         "comment": "",
         "Attribute": [
           {
-            "uuid": "a8ac87f1-2bbc-5e6e-8115-56d043ffbb5c",
+            "uuid": "678e13ee-a65a-5745-a709-22c87d2ef8e4",
             "object_relation": "hypothesis-id",
             "type": "text",
             "category": "Other",
@@ -129,7 +129,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "119eb4a5-2422-5021-9c9c-547109ba5898",
+            "uuid": "ebd24258-d808-5dd2-9f66-ea40b0efb9a1",
             "object_relation": "hypothesis",
             "type": "text",
             "category": "Other",
@@ -138,7 +138,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "94b34887-0ccd-5e3f-b723-123193329c6f",
+            "uuid": "bc114385-442f-51f6-92db-091c049f668b",
             "object_relation": "scope",
             "type": "text",
             "category": "Other",
@@ -156,7 +156,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "905ce8d7-c836-504b-88e1-e00137a771e8",
+            "uuid": "f2125c81-f2fa-5543-8e34-ee56419b6adf",
             "object_relation": "analysis",
             "type": "text",
             "category": "Other",
@@ -165,7 +165,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "9ef62188-8cfa-580d-9fcf-5c9621dcf9b5",
+            "uuid": "f6b355bc-0f79-58f4-a599-6a9e1e1a6708",
             "object_relation": "status",
             "type": "text",
             "category": "Other",
@@ -188,7 +188,7 @@
         "uuid": "b29f5d79-9c3e-51b1-b335-96a567b7bd63",
         "name": "threat-hunt-query",
         "meta-category": "threat-hunting",
-        "description": "",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
         "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
         "template_version": "1",
         "comment": "hunt.md step `enumerate-spn-requests`",
@@ -222,7 +222,7 @@
             "disable_correlation": true
           },
           {
-            "uuid": "5717864a-74da-599f-8ee1-ecaf4d930422",
+            "uuid": "709f19a8-b11e-51e0-940c-c1566ba3e490",
             "object_relation": "data-source",
             "type": "text",
             "category": "Other",

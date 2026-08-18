@@ -37,7 +37,8 @@ CI ([.github/workflows/lint.yml](.github/workflows/lint.yml)) runs the checks be
 1. `validate` + `convert` (all three targets) over both files in [hunts/](hunts/).
 2. **Round-trip must stay exact** for repo hunts: `md → cacao → md` preserves step kinds, slugs, targets, parameters and every edge. This is load-bearing — it's what the CACAO profile claims in [PROFILES.md](PROFILES.md).
 3. `python tools/tests/check.py` — the actual suite (stdlib only). Covers all of the above plus guardrails, confidence/`unavailable:` handling, result validation, and MISP (`md → misp → md` byte-exact via the attachment; objects-only events import as lint-clean drafts).
-4. **Corpus check**: [examples/cacao-import/fetch-corpus.sh](examples/cacao-import/fetch-corpus.sh) pulls 49 real CACAO playbooks from six projects; all must import, parse and lint clean (332 steps preserved). Requires `gh` + network. The vendored conversions in [examples/cacao-import/](examples/cacao-import/) are the offline fixtures.
+4. **Live MISP check** (opt-in, needs an instance): `MISP_URL=… MISP_KEY=… python tools/tests/e2e_misp.py` — pushes both hunts, re-imports byte-exact, checks templates/taxonomy presence and `hunt-ex` tag search. Run it after touching `misp.py`'s object shapes; MISP drops malformed/unknown-template objects *silently*, so unit tests can't catch that class of bug.
+5. **Corpus check**: [examples/cacao-import/fetch-corpus.sh](examples/cacao-import/fetch-corpus.sh) pulls 49 real CACAO playbooks from six projects; all must import, parse and lint clean (332 steps preserved). Requires `gh` + network. The vendored conversions in [examples/cacao-import/](examples/cacao-import/) are the offline fixtures.
 
 ## Architecture
 

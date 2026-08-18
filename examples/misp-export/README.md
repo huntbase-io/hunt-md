@@ -18,6 +18,10 @@ python -m huntmd convert ../hunts/kerberoasting.md --to misp --result ../example
 python -m huntmd convert ../hunts/scattered-spider-identity-takeover.md --to misp -o ../examples/misp-export/scattered-spider-identity-takeover.misp.json
 ```
 
+These were pushed to a live MISP 2.5.44 and fetched back with
+[`tools/tests/e2e_misp.py`](../../tools/tests/e2e_misp.py) — see PROFILES.md §3 for
+the instance prerequisites (templates + taxonomy must be present and enabled).
+
 `huntmd convert examples/misp-export/kerberoasting.misp.json` returns the original
 hunt.md byte-for-byte (the source rides along as an attachment). Strip the
 attachment and the same command yields a TODO-marked draft built from the objects.

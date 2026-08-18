@@ -325,6 +325,31 @@ the playbook id (SPEC §10), so re-exporting an unchanged hunt is stable, and an
 event can be updated in place. Object templates are pinned to
 `threat-hunt-*` v1; the taxonomy vocabularies to `hunt-ex` v4.
 
+**Verified against a live MISP** (2.5.44 via misp-docker) —
+[`tools/tests/e2e_misp.py`](./tools/tests/e2e_misp.py) pushes every repo hunt,
+fetches it back as MISP serialises it, re-imports it byte-exact, and confirms
+`restSearch` by `hunt-ex:telemetry` + `hunt-ex:query-language` finds them. What
+that surfaced, so you don't rediscover it:
+
+- **The instance must have the `threat-hunt-*` templates and `hunt-ex`
+  taxonomy.** They were merged upstream recently; images built before that
+  (2.5.44's bundle, for one) don't have them, and MISP **silently drops** any
+  object whose template it doesn't know — the event saves, tags and attachment
+  land, and the objects just aren't there. Run
+  `cake Admin updateObjectTemplates` / `updateTaxonomies` (or update the
+  `misp-objects` / `misp-taxonomies` submodules) and *enable* the `hunt-ex`
+  taxonomy first. The e2e script checks for this before pushing.
+- **Re-export ⇒ `POST /events/edit/<uuid>`, not `add`.** Ids are deterministic,
+  so a second `add` is a duplicate. Under `edit`, single-valued attributes
+  (`status`, `hypothesis`, `query`, …) have value-independent ids and are
+  *replaced*; only relations that legitimately repeat (`data-source`, `tool`,
+  `contributor`, `attack-id`) key on their value.
+- **Deleting an event blocklists its UUID.** With deterministic ids that means a
+  deleted hunt can't be re-pushed until the entry is removed from
+  `/eventBlocklists`. Prefer `edit`, or unpublish, over delete.
+- MISP requires a non-empty object `description` (the template's own is
+  emitted) and de-duplicates identical attribute values within an object.
+
 ### Import (MISP → hunt.md)
 
 `huntmd convert event.json` recognises a MISP event by shape and:

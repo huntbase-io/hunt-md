@@ -68,12 +68,34 @@ _HUNT_EX: dict[str, tuple[str, ...]] = {
     ),
 }
 
-#: misp-objects templates (name → (uuid, version, meta-category)).
+#: misp-objects templates (name → (uuid, version, meta-category, description)).
+#: The description is the template's own — MISP silently drops an object whose
+#: ``description`` is empty, so it must be present and non-empty.
 _TEMPLATES = {
-    "threat-hunt-context": ("6dec94ff-b74b-4cab-ad38-3d3c8308bdb3", "1", "threat-hunting"),
-    "threat-hunt-hypothesis": ("4136cd18-3edd-49fb-90ba-24cbacacc662", "1", "threat-hunting"),
-    "threat-hunt-query": ("0fc943ec-c8fd-4311-b748-249bdef0f7d8", "1", "threat-hunting"),
-    "threat-hunt-finding": ("ce3ab17c-9ac5-47fb-bad5-48d368568437", "1", "threat-hunting"),
+    "threat-hunt-context": (
+        "6dec94ff-b74b-4cab-ad38-3d3c8308bdb3",
+        "1",
+        "threat-hunting",
+        "Metadata describing the purpose, methodology, and resourcing of a threat hunt. One instance per MISP event; corresponds to the Purpose and Equip sections of the hunt report.",
+    ),
+    "threat-hunt-hypothesis": (
+        "4136cd18-3edd-49fb-90ba-24cbacacc662",
+        "1",
+        "threat-hunting",
+        "A single testable hypothesis from the Scope and Execute sections of a hunt: its scoping decision, targeted ATT&CK technique(s), and analytic reasoning. One instance per hypothesis.",
+    ),
+    "threat-hunt-query": (
+        "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
+        "1",
+        "threat-hunting",
+        "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
+    ),
+    "threat-hunt-finding": (
+        "ce3ab17c-9ac5-47fb-bad5-48d368568437",
+        "1",
+        "threat-hunting",
+        "The outcome of testing a hypothesis: conclusion, classification, and follow-up. Corresponds to the Feedback section of a hunt report. One instance per hypothesis.",
+    ),
 }
 
 #: hunt.md query language (SPEC §5.1) → HUNT-EX ``query-language`` value.
@@ -225,13 +247,25 @@ def _attr(relation: str, value: Any, *, type_: str = "text", uid: str, comment: 
     return a
 
 
+#: Object relations that may legitimately repeat inside one object. Their attribute
+#: ids include the value; every other relation's id is keyed on the relation alone,
+#: so a re-export with a changed value *replaces* the attribute under ``events/edit``
+#: instead of leaving the stale one beside it.
+_MULTI_VALUED = {"data-source", "tool", "contributor", "attack-id"}
+
+
+def _attr_uid(ns: uuid.UUID, obj_key: str, rel: str, value: Any) -> str:
+    parts = ["attr", obj_key, rel] + ([str(value)] if rel in _MULTI_VALUED else [])
+    return _uid(ns, *parts)
+
+
 def _object(name: str, ns: uuid.UUID, key: str, attributes: list[dict], comment: str = "") -> dict[str, Any]:
-    tmpl_uuid, version, category = _TEMPLATES[name]
+    tmpl_uuid, version, category, description = _TEMPLATES[name]
     return {
         "uuid": _uid(ns, "object", key),
         "name": name,
         "meta-category": category,
-        "description": "",
+        "description": description,
         "template_uuid": tmpl_uuid,
         "template_version": version,
         "comment": comment,
@@ -253,7 +287,7 @@ def _reference(obj: dict, ns: uuid.UUID, relationship: str, target_uuid: str, co
 
 
 def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None) -> dict:
-    a = lambda rel, val, **kw: _attr(rel, val, uid=_uid(ns, "attr", "context", rel, str(val)), **kw)  # noqa: E731
+    a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, "context", rel, val), **kw)  # noqa: E731
     attrs = [a("hunt-title", pb.name or "Untitled hunt")]
     purpose = misp.get("purpose") or pb.description.strip() or pb.meta.get("hypothesis") or pb.name
     attrs.append(a("purpose", str(purpose).strip()))
@@ -262,6 +296,7 @@ def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None
     status = misp.get("status") or ("Concluded" if result else "Planned")
     attrs.append(a("status", status))
     seen_ds: set[str] = set()
+    tools: list[str] = []
     for slug, t in (pb.meta.get("targets") or {}).items():
         if not isinstance(t, dict) or t.get("agent") or t.get("role") or t.get("individual"):
             continue
@@ -270,8 +305,10 @@ def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None
             seen_ds.add(ds)
             attrs.append(a("data-source", ds, comment=f"target: {slug} (category: {t.get('category', '?')})"))
         for product in _bindings(t):
-            attrs.append(a("tool", product))
-    for c in misp.get("contributors") or misp.get("contributor") or []:
+            if product not in tools:  # MISP de-duplicates identical values within an object anyway
+                tools.append(product)
+    attrs.extend(a("tool", product) for product in tools)
+    for c in dict.fromkeys(misp.get("contributors") or misp.get("contributor") or []):
         attrs.append(a("contributor", c))
     for rel in ("period-start", "period-end"):
         if misp.get(rel):
@@ -280,7 +317,7 @@ def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None
 
 
 def _hypothesis_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None) -> dict:
-    a = lambda rel, val, **kw: _attr(rel, val, uid=_uid(ns, "attr", "hypothesis", rel, str(val)), **kw)  # noqa: E731
+    a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, "hypothesis", rel, val), **kw)  # noqa: E731
     hyp = str(pb.meta.get("hypothesis") or "").strip()
     attrs = [
         a("hypothesis-id", "H1"),
@@ -319,7 +356,7 @@ def _flow_summary(pb: Playbook) -> str:
 
 
 def _query_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict:
-    a = lambda rel, val, **kw: _attr(rel, val, uid=_uid(ns, "attr", "query", s.slug, rel), **kw)  # noqa: E731
+    a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, f"query:{s.slug}", rel, val), **kw)  # noqa: E731
     lang = (s.lang or "").lower()
     attrs = [
         a("hypothesis-id", "H1"),
@@ -344,7 +381,7 @@ def _query_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict:
 def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, list[dict]]:
     """A ``threat-hunt-finding`` from a SPEC §12 run result, plus the outcome tags."""
     r = result.get("hunt_result") or result
-    a = lambda rel, val, **kw: _attr(rel, val, uid=_uid(ns, "attr", "finding", str(r.get("run", "")), rel), **kw)  # noqa: E731
+    a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, f"finding:{r.get('run', '')}", rel, val), **kw)  # noqa: E731
     disposition = str(r.get("disposition") or "inconclusive")
     hunt_ex_outcome, obj_outcome = _DISPOSITION_OUTCOME.get(disposition, ("inconclusive", "Inconclusive"))
     if disposition == "benign" and not (r.get("evidence_summary") or {}).get("benign_supporting"):
