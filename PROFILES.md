@@ -389,4 +389,4 @@ A new runtime implements: (1) IR-kind → its step model, (2) target resolution,
 interchange/sharing profile is the same shape minus execution:
 `X_to_playbook` / `playbook_to_X` over the IR plus a `profile == "x"` lint
 branch — [`tools/huntmd/misp.py`](./tools/huntmd/misp.py) is the smallest
-worked example (≈600 lines, both directions, one namespaced frontmatter block).
+worked example (≈750 lines, both directions, one namespaced frontmatter block).
