@@ -84,6 +84,7 @@ Key invariants when editing:
 Format-level: edges resolve, queries have `target=`, `if~:` has an `indeterminate:` branch (error), agent steps have `tools` + `max_iterations` (warn), actions are `approval: required` (warn), reachability, severity ordinal, guardrail vocabulary (error) and relaxation (warn), numeric confidence (warn), `unavailable: → end` (error).
 Run results are a separate entry point: `results.py::validate_result`, reached by `validate` when the input has a `hunt_result` root.
 Huntbase-profile-only: `while:` and `run:` are errors; `switch:` and `$var` dataflow are warnings naming the documented substitution. Keep profile-specific checks behind the `profile == "huntbase"` branch so `--profile format` stays neutral.
+MISP-profile-only (`misp.py::misp_issues`, all warnings): off-vocabulary `misp:` values, query language with no `hunt-ex:query-language` mapping, no target that maps to a telemetry plane, no ATT&CK label.
 
 ## Authoring hunts
 

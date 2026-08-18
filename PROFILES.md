@@ -385,4 +385,8 @@ runtime profile.
 ## Adding a profile
 A new runtime implements: (1) IR-kind → its step model, (2) target resolution,
 (3) parameter/variable handling, (4) a capability declaration for the matrix,
-(5) a linter pass. Keep platform specifics here — never in `SPEC.md`.
+(5) a linter pass. Keep platform specifics here — never in `SPEC.md`. An
+interchange/sharing profile is the same shape minus execution:
+`X_to_playbook` / `playbook_to_X` over the IR plus a `profile == "x"` lint
+branch — [`tools/huntmd/misp.py`](./tools/huntmd/misp.py) is the smallest
+worked example (≈600 lines, both directions, one namespaced frontmatter block).

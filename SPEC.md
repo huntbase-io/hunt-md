@@ -89,7 +89,10 @@ targets:                            # abstract data sources / agents / people (�
 ```
 
 Unknown frontmatter keys pass through (Tier 2). `parameters`, `targets`,
-`labels`, `severity`, `hypothesis` have defined meaning (§11).
+`labels`, `severity`, `hypothesis` have defined meaning (§11). A profile MAY
+define a namespaced block for facts only it needs (e.g. `misp:` for HUNT-EX
+sharing classification, `huntbase:` bindings on targets); such blocks are
+documented in PROFILES.md, never here, and every other profile ignores them.
 
 ### 3.2 Severity
 Prefer the ordinal words `critical | high | medium | low`. A numeric `severity`
@@ -497,4 +500,5 @@ A hunt is linted for: flow reachability; variable def-before-use; every query ha
 a `target`; every `if~:` has `indeterminate:`; every `agent` step has `tools` +
 bounds; destructive `action`s are gated; and — per the chosen profile —
 unsupported kinds/languages/dataflow reported as actionable warnings, not silent
-mis-compiles.
+mis-compiles. Profiles (runtime, interchange, sharing) and what each one lints
+are enumerated in PROFILES.md.

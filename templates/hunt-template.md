@@ -34,6 +34,14 @@ targets:
   # edr:  { category: endpoint,  name: EDR, huntbase: { product: msatp } }
   hunter: { agent: true,         name: Hunt agent }    # an agent; the runtime binds which one
   tier2:  { role: analyst,       name: Tier-2 analyst }
+
+# --- Sharing classification (optional; PROFILES.md §3) ------------------------
+# Only read when exporting to MISP (`huntmd convert … --to misp`). HUNT-EX vocab.
+# misp:
+#   telemetry: [identity]               # override when targets are just "siem"
+#   trigger: intel-report               # intel-report | sector-alert | prior-hunt | …
+#   handoff: keep-as-periodic-hunt
+
 ---
 
 # <Hunt name>

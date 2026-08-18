@@ -114,6 +114,13 @@ runtime would write its own adapter over the same parsed graph.
   playbooks from six projects (see [`../examples/cacao-import/`](../examples/cacao-import)).
 - CACAO output is structurally complete but **not schema-validated** against the
   OASIS spec by this tool — run it through a CACAO validator before publishing.
+- **A MISP import is exact only if the event carries the `<slug>.hunt.md`
+  attachment** (i.e. it was exported by `huntmd`). A peer-authored event yields a
+  TODO-marked draft: the `threat-hunt-*` objects carry queries and the hypothesis,
+  not control flow. Verified live against MISP 2.5.44 with
+  [`tests/e2e_misp.py`](./tests/e2e_misp.py); the target instance must have the
+  `threat-hunt-*` templates and the `hunt-ex` taxonomy installed and enabled, or
+  MISP silently drops the objects (PROFILES §3).
 - Not yet: full multi-step parallel-branch tails, `while:`/sub-playbook execution
   (rejected by the huntbase profile).
 
@@ -122,5 +129,6 @@ runtime would write its own adapter over the same parsed graph.
 |---|---|
 | `huntmd/core.py` | parser, IR, Huntbase definition emitter (+ inverse), IR → markdown, linter |
 | `huntmd/cacao.py` | CACAO v2 export **and** CACAO v1.x/v2.0 import, over the same IR |
+| `huntmd/misp.py` | MISP event export (HUNT-EX tags + `threat-hunt-*` objects + source attachment) **and** import, over the same IR |
 | `huntmd/results.py` | run-result vocabularies + validation (SPEC §12) |
 | `huntmd/__main__.py` | CLI |
