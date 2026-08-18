@@ -1,0 +1,330 @@
+{
+  "Event": {
+    "uuid": "2930ccb3-7b16-5bc7-84b2-5fe8489f0ef7",
+    "info": "Kerberoasting hunt",
+    "date": "2026-08-18",
+    "distribution": "2",
+    "threat_level_id": "1",
+    "analysis": "2",
+    "published": false,
+    "Tag": [
+      {
+        "name": "tlp:green"
+      },
+      {
+        "name": "hunt-ex:content=\"hypothesis\""
+      },
+      {
+        "name": "hunt-ex:content=\"query\""
+      },
+      {
+        "name": "hunt-ex:methodology=\"structured-hypothesis-driven\""
+      },
+      {
+        "name": "hunt-ex:trigger=\"intel-report\""
+      },
+      {
+        "name": "hunt-ex:telemetry=\"identity\""
+      },
+      {
+        "name": "hunt-ex:query-language=\"kusto\""
+      },
+      {
+        "name": "hunt-ex:outcome=\"inconclusive\""
+      },
+      {
+        "name": "hunt-ex:content=\"finding\""
+      },
+      {
+        "name": "hunt-ex:byproduct=\"data-source-gap\""
+      }
+    ],
+    "Attribute": [
+      {
+        "uuid": "d0523087-707f-5f2f-be3f-0848d70e5460",
+        "type": "attachment",
+        "category": "External analysis",
+        "value": "kerberoasting-hunt.hunt.md",
+        "to_ids": false,
+        "disable_correlation": true,
+        "comment": "hunt.md source (exact; regenerate the objects from this, do not edit them)",
+        "data": "LS0tCnR5cGU6IGludmVzdGlnYXRpb24KbmFtZTogS2VyYmVyb2FzdGluZyBodW50CmxhYmVsczoKICAtIGh1bnQKICAtIGF0dGFjay50MTU1OC4wMDMgICAgIyBLZXJiZXJvYXN0aW5nCnRscDogZ3JlZW4Kc2V2ZXJpdHk6IGhpZ2gKaHlwb3RoZXNpczogPgogIFNlcnZpY2UgYWNjb3VudHMgd2l0aCB3ZWFrIHBhc3N3b3JkcyBhcmUgYmVpbmcga2VyYmVyb2FzdGVkIChSQzQgVEdTIHJlcXVlc3RzKQogIGZyb20gd29ya3N0YXRpb25zIG91dHNpZGUgdGhlIGFkbWluIFZMQU4sIGZvciBvZmZsaW5lIGNyZWRlbnRpYWwgY3JhY2tpbmcuCnJlZmVyZW5jZXM6CiAgLSBuYW1lOiBNSVRSRSBBVFQmQ0sgVDE1NTguMDAzCiAgICB1cmw6IGh0dHBzOi8vYXR0YWNrLm1pdHJlLm9yZy90ZWNobmlxdWVzL1QxNTU4LzAwMy8KcGFyYW1ldGVyczoKICBsb29rYmFjazogeyB0eXBlOiBkdXJhdGlvbiwgZGVmYXVsdDogIjE0ZCIgfQp0YXJnZXRzOgogIHNpZW06ICAgeyBjYXRlZ29yeTogc2llbSwgbmFtZTogU0lFTSB9CiAgaHVudGVyOiB7IGFnZW50OiB0cnVlLCAgICBuYW1lOiBIdW50IGFnZW50IH0KICB0aWVyMjogIHsgcm9sZTogYW5hbHlzdCwgIG5hbWU6IFRpZXItMiBhbmFseXN0IH0KbWlzcDogICAgICAgICAgICAgICAgICAgIyBIVU5ULUVYIGNsYXNzaWZpY2F0aW9uIHdoZW4gc2hhcmVkIHZpYSBNSVNQIChQUk9GSUxFUyDCpzMpCiAgdGVsZW1ldHJ5OiBbaWRlbnRpdHldCiAgdHJpZ2dlcjogaW50ZWwtcmVwb3J0Ci0tLQoKIyBLZXJiZXJvYXN0aW5nIGh1bnQKCkh1bnQgZm9yIFJDNCBUR1MgKGV2ZW50IDQ3NjksIHRpY2tldCBlbmNyeXB0aW9uIGAweDE3YCkgcmVxdWVzdCBidXJzdHMgaW5kaWNhdGluZwpvZmZsaW5lIGNyYWNraW5nIG9mIHNlcnZpY2UtYWNjb3VudCBjcmVkZW50aWFscy4gQSBxdWVyeSBnYXRoZXJzIHRoZSBjYW5kaWRhdGVzLAphbiBhZ2VudCB0cmlhZ2VzIGJ1cnN0LXZzLWxlZ2l0aW1hdGUsIGFuZCB0aGUgdmVyZGljdCByb3V0ZXMgcmVzcG9uc2UuCgojIyBlbnVtZXJhdGUtc3BuLXJlcXVlc3RzCmBgYGtxbCB0YXJnZXQ9c2llbSBwYXJhbXM9KGRheXM9bG9va2JhY2spClNlY3VyaXR5RXZlbnQKfCB3aGVyZSBUaW1lR2VuZXJhdGVkID4gYWdvKHt7ZGF5c319KQp8IHdoZXJlIEV2ZW50SUQgPT0gNDc2OSBhbmQgVGlja2V0RW5jcnlwdGlvblR5cGUgPT0gIjB4MTciCnwgc3VtbWFyaXplIHJlcXVlc3RzPWNvdW50KCksIHNvdXJjZXM9ZGNvdW50KElwQWRkcmVzcykgYnkgQWNjb3VudApgYGAKCiMjIGNoZWNrLXZvbHVtZQppZjogYGVudW1lcmF0ZS1zcG4tcmVxdWVzdHMucm93cyA+IDBgCnRoZW46IOKGkiB0cmlhZ2UKZWxzZTog4oaSIGVuZAoKIyMgdHJpYWdlCmBgYGFnZW50IHRhcmdldD1odW50ZXIKb2JqZWN0aXZlOiA+CiAgRGV0ZXJtaW5lIHdoZXRoZXIgdGhlIGFjY291bnRzIHNob3cga2VyYmVyb2FzdGluZyAoYnVyc3QgZW51bWVyYXRpb24sIG1hbnkKICBkaXN0aW5jdCB3b3Jrc3RhdGlvbiBzb3VyY2VzLCBub24tYWRtaW4gb3JpZ2luKSBvciBsZWdpdGltYXRlIHNlcnZpY2UKICBiZWhhdmlvdXIuIFJldHVybiBhIHNpbmdsZSB2ZXJkaWN0IHBlciBydW4uCmNvbnRleHQ6IFtlbnVtZXJhdGUtc3BuLXJlcXVlc3RzXQp0b29sczogW3NpZW1dCnN1Y2Nlc3NfY3JpdGVyaWE6ID4KICBBIHZlcmRpY3Qgb2YgbWFsaWNpb3VzIHwgc3VzcGljaW91cyB8IGJlbmlnbiwgd2l0aCB0aGUgZGVjaWRpbmcgZXZpZGVuY2UgY2l0ZWQuCm1heF9pdGVyYXRpb25zOiA2CmBgYAoKIyMgcm91dGUtYnktdmVyZGljdApzd2l0Y2g6IGB0cmlhZ2UudmVyZGljdGAKLSAibWFsaWNpb3VzIiAg4oaSIGNvbnRhaW4KLSAic3VzcGljaW91cyIg4oaSIG1hbnVhbC1yZXZpZXcKLSBkZWZhdWx0ICAgICAg4oaSIGVuZAoKIyMgY29udGFpbgpgYGBhY3Rpb24gdGFyZ2V0PXNpZW0Kfn5+eWFtbAphcHByb3ZhbDogcmVxdWlyZWQKfn5+CkRpc2FibGUgdGhlIGZsYWdnZWQgc2VydmljZSBhY2NvdW50cyBhbmQgZm9yY2UgYSBjcmVkZW50aWFsIHJvdGF0aW9uIHdpdGggYQpzdHJvbmcsIHJhbmRvbWl6ZWQgcGFzc3dvcmQ7IHJldmlldyBTUE4gYXNzaWdubWVudHMuCmBgYArihpIgZW5kCgojIyBtYW51YWwtcmV2aWV3CmBgYG1hbnVhbCB0YXJnZXQ9dGllcjIKUmV2aWV3IHRoZSBmbGFnZ2VkIGFjY291bnRzIGFuZCB0aGVpciBTUE4gdXNhZ2U7IGVpdGhlciBpbnZva2UgY29udGFpbm1lbnQgb3IKY2xvc2Ugd2l0aCBhIHR1bmluZyBub3RlIGZvciB0aGUgYnVyc3QgdGhyZXNob2xkLgpgYGAK4oaSIGVuZAo="
+      },
+      {
+        "uuid": "de878c17-6ed4-545f-a969-86613ab27956",
+        "type": "link",
+        "category": "External analysis",
+        "value": "https://attack.mitre.org/techniques/T1558/003/",
+        "to_ids": false,
+        "disable_correlation": true,
+        "comment": "MITRE ATT&CK T1558.003"
+      }
+    ],
+    "Object": [
+      {
+        "uuid": "51dca00e-aa53-505d-8706-2ed881d7cbf5",
+        "name": "threat-hunt-context",
+        "meta-category": "threat-hunting",
+        "description": "Metadata describing the purpose, methodology, and resourcing of a threat hunt. One instance per MISP event; corresponds to the Purpose and Equip sections of the hunt report.",
+        "template_uuid": "6dec94ff-b74b-4cab-ad38-3d3c8308bdb3",
+        "template_version": "1",
+        "comment": "",
+        "Attribute": [
+          {
+            "uuid": "5275d3a3-5559-5648-922a-6b1cb4ede9a6",
+            "object_relation": "hunt-title",
+            "type": "text",
+            "category": "Other",
+            "value": "Kerberoasting hunt",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "fa45927a-eb87-5435-b4bf-1776a8c1c02d",
+            "object_relation": "purpose",
+            "type": "text",
+            "category": "Other",
+            "value": "Hunt for RC4 TGS (event 4769, ticket encryption `0x17`) request bursts indicating\noffline cracking of service-account credentials. A query gathers the candidates,\nan agent triages burst-vs-legitimate, and the verdict routes response.",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "0b2165d6-3264-5ea8-a546-69b139a2a04d",
+            "object_relation": "methodology",
+            "type": "text",
+            "category": "Other",
+            "value": "structured-hypothesis-driven",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "7647860f-64ef-5771-8972-ca951d8cfef0",
+            "object_relation": "status",
+            "type": "text",
+            "category": "Other",
+            "value": "Concluded",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "ee6d982d-626d-5718-9048-5e302bc1f63e",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "SIEM",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: siem (category: siem)"
+          }
+        ],
+        "ObjectReference": []
+      },
+      {
+        "uuid": "6e887bcc-364b-55a1-b42a-b01c67395d38",
+        "name": "threat-hunt-hypothesis",
+        "meta-category": "threat-hunting",
+        "description": "A single testable hypothesis from the Scope and Execute sections of a hunt: its scoping decision, targeted ATT&CK technique(s), and analytic reasoning. One instance per hypothesis.",
+        "template_uuid": "4136cd18-3edd-49fb-90ba-24cbacacc662",
+        "template_version": "1",
+        "comment": "",
+        "Attribute": [
+          {
+            "uuid": "678e13ee-a65a-5745-a709-22c87d2ef8e4",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "ebd24258-d808-5dd2-9f66-ea40b0efb9a1",
+            "object_relation": "hypothesis",
+            "type": "text",
+            "category": "Other",
+            "value": "Service accounts with weak passwords are being kerberoasted (RC4 TGS requests) from workstations outside the admin VLAN, for offline credential cracking.",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "bc114385-442f-51f6-92db-091c049f668b",
+            "object_relation": "scope",
+            "type": "text",
+            "category": "Other",
+            "value": "In-Scope",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "fa6f3311-6751-5421-b720-61b1a8be8689",
+            "object_relation": "attack-id",
+            "type": "text",
+            "category": "Other",
+            "value": "T1558.003",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "f2125c81-f2fa-5543-8e34-ee56419b6adf",
+            "object_relation": "analysis",
+            "type": "text",
+            "category": "Other",
+            "value": "- enumerate-spn-requests [query]: kql against siem\n- check-volume [decision]: if enumerate-spn-requests.rows > 0\n- triage [agent]: Determine whether the accounts show kerberoasting (burst enumeration, many distinct workstation sources, non-admin origin) or legitimate service behaviour. Return a single verdict per run.\n- route-by-verdict [decision]: if triage.verdict\n- contain [action]: Disable the flagged service accounts and force a credential rotation with a\n- manual-review [task]: Review the flagged accounts and their SPN usage; either invoke containment or",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "f6b355bc-0f79-58f4-a599-6a9e1e1a6708",
+            "object_relation": "status",
+            "type": "text",
+            "category": "Other",
+            "value": "Tested",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "f2217da9-61a2-512f-9681-f1db04f1e48c",
+            "object_uuid": "6e887bcc-364b-55a1-b42a-b01c67395d38",
+            "referenced_uuid": "51dca00e-aa53-505d-8706-2ed881d7cbf5",
+            "relationship_type": "part-of",
+            "comment": ""
+          }
+        ]
+      },
+      {
+        "uuid": "b29f5d79-9c3e-51b1-b335-96a567b7bd63",
+        "name": "threat-hunt-query",
+        "meta-category": "threat-hunting",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
+        "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
+        "template_version": "1",
+        "comment": "hunt.md step `enumerate-spn-requests`",
+        "Attribute": [
+          {
+            "uuid": "72e0a237-4cf4-5283-bbc3-6b841719fcbe",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "ac2a7b4b-bff9-58db-a8d2-68a2ef79b58b",
+            "object_relation": "query",
+            "type": "text",
+            "category": "Other",
+            "value": "SecurityEvent\n| where TimeGenerated > ago({{days}})\n| where EventID == 4769 and TicketEncryptionType == \"0x17\"\n| summarize requests=count(), sources=dcount(IpAddress) by Account",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "hunt.md step: enumerate-spn-requests"
+          },
+          {
+            "uuid": "4477e9c1-7429-5ba7-889b-fcd9e7eb679d",
+            "object_relation": "query-language",
+            "type": "text",
+            "category": "Other",
+            "value": "KQL",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "709f19a8-b11e-51e0-940c-c1566ba3e490",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "SIEM",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: siem"
+          },
+          {
+            "uuid": "4438d608-2df4-56af-befc-bfc0e5eca46b",
+            "object_relation": "comment",
+            "type": "comment",
+            "category": "Other",
+            "value": "parameters: {{days}} ← lookback",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "a9672872-c39e-53a5-b8ce-f6512991eb03",
+            "object_uuid": "b29f5d79-9c3e-51b1-b335-96a567b7bd63",
+            "referenced_uuid": "6e887bcc-364b-55a1-b42a-b01c67395d38",
+            "relationship_type": "tests",
+            "comment": "query tests hypothesis H1"
+          }
+        ]
+      },
+      {
+        "uuid": "2febb3bd-dd60-5332-8cd3-e55b6c03a3a5",
+        "name": "threat-hunt-finding",
+        "meta-category": "threat-hunting",
+        "description": "The outcome of testing a hypothesis: conclusion, classification, and follow-up. Corresponds to the Feedback section of a hunt report. One instance per hypothesis.",
+        "template_uuid": "ce3ab17c-9ac5-47fb-bad5-48d368568437",
+        "template_version": "1",
+        "comment": "run 2026-07-31T09:14:22Z/7f31",
+        "Attribute": [
+          {
+            "uuid": "d8d7b094-b26f-5e8d-ab1e-c025e42e915a",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "0d3a0265-ab89-53e3-a1e4-5241a41d3c0c",
+            "object_relation": "outcome",
+            "type": "text",
+            "category": "Other",
+            "value": "Inconclusive",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "6f194764-fa1b-515d-b068-939cdfc85bb3",
+            "object_relation": "conclusion",
+            "type": "text",
+            "category": "Other",
+            "value": "Disposition: suspicious (confidence: medium); run 2026-07-31T09:14:22Z/7f31.\n[enumerate-spn-requests] suspicious: Three service accounts show RC4-only TGS bursts sourced from the workstation VLAN rather than the admin VLAN.\n[check-volume] suspicious: Request volume exceeded the threshold, so triage proceeded.\n[triage] suspicious: The burst pattern and non-admin source subnets are consistent with kerberoasting, but no credential-rotation change record was found that would explain the activity benignly. Host process ancestry could not be checked, so an approved scanner remains possible.\nSupports malicious: RC4-only TGS requests for accounts that normally negotiate AES; request sources outside the administrative VLAN\nUnknown: whether an approved vulnerability scanner ran in the window; whether a credential-rotation job touched these accounts\nNot examined — edr: Process ancestry for the requesting hosts was not examined, so an approved scanner could not be ruled out as the source.",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "ec03e89b-ab9a-567f-80fd-48c014d22336",
+            "object_relation": "recommendation",
+            "type": "text",
+            "category": "Other",
+            "value": "- same accounts across other forests and trusted domains\n- other accounts requested by the same 14 source workstations",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "e6e72df4-b935-57a5-8b22-f84a3f2a78d6",
+            "object_relation": "detection-gap",
+            "type": "boolean",
+            "category": "Other",
+            "value": "0",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "a02560f0-0263-5a78-895f-bd8dfd53dd4f",
+            "object_uuid": "2febb3bd-dd60-5332-8cd3-e55b6c03a3a5",
+            "referenced_uuid": "6e887bcc-364b-55a1-b42a-b01c67395d38",
+            "relationship_type": "concludes",
+            "comment": "finding concludes hypothesis H1"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -49,7 +49,15 @@ jobs:
           done
           exit $status
 
-      - name: Regression checks (conversion + exact CACAO round-trip)
+      - name: Lint every hunt against the MISP / HUNT-EX profile (warnings allowed)
+        run: |
+          for f in hunts/*.md; do
+            echo "::group::$f"
+            huntmd validate "$f" --profile misp || true
+            echo "::endgroup::"
+          done
+
+      - name: Regression checks (conversion + exact CACAO and MISP round-trips)
         run: python tools/tests/check.py
 
   disclosure:

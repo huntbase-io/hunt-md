@@ -1,0 +1,634 @@
+{
+  "Event": {
+    "uuid": "a023a8e7-84d0-5aba-bb81-dd70fe58ee1f",
+    "info": "Scattered Spider identity-takeover hunt",
+    "date": "2026-08-18",
+    "distribution": "2",
+    "threat_level_id": "1",
+    "analysis": "0",
+    "published": false,
+    "Tag": [
+      {
+        "name": "tlp:green"
+      },
+      {
+        "name": "hunt-ex:content=\"hypothesis\""
+      },
+      {
+        "name": "hunt-ex:content=\"query\""
+      },
+      {
+        "name": "hunt-ex:methodology=\"structured-hypothesis-driven\""
+      },
+      {
+        "name": "hunt-ex:telemetry=\"identity\""
+      },
+      {
+        "name": "hunt-ex:telemetry=\"endpoint\""
+      },
+      {
+        "name": "hunt-ex:query-language=\"kusto\""
+      }
+    ],
+    "Attribute": [
+      {
+        "uuid": "a2c61036-4552-5115-a214-36304d6bc27a",
+        "type": "attachment",
+        "category": "External analysis",
+        "value": "scattered-spider-identity-takeover-hunt.hunt.md",
+        "to_ids": false,
+        "disable_correlation": true,
+        "comment": "hunt.md source (exact; regenerate the objects from this, do not edit them)",
+        "data": "LS0tCnR5cGU6IGludmVzdGlnYXRpb24KbmFtZTogU2NhdHRlcmVkIFNwaWRlciBpZGVudGl0eS10YWtlb3ZlciBodW50CmxhYmVsczoKICAtIGh1bnQKICAtIGF0dGFjay50MTYyMSAgICAgICAgIyBNRkEgcmVxdWVzdCBnZW5lcmF0aW9uIChwdXNoIGJvbWJpbmcpCiAgLSBhdHRhY2sudDEyMTkgICAgICAgICMgcmVtb3RlIGFjY2VzcyBzb2Z0d2FyZQogIC0gYXR0YWNrLnQxMTE0LjAwMiAgICAjIHJlbW90ZSBlbWFpbCBjb2xsZWN0aW9uCiAgLSBhdHRhY2sudDE0ODQuMDAyICAgICMgZG9tYWluIHRydXN0IG1vZGlmaWNhdGlvbiAocm9ndWUgZmVkZXJhdGlvbikKdGxwOiBncmVlbiAgICAgICAgICAgICMgZGVyaXZlZCBmcm9tIHB1YmxpYyBhZHZpc29yaWVzOyBubyBvcmctc3BlY2lmaWMgZGV0YWlsCnNldmVyaXR5OiBoaWdoCmh5cG90aGVzaXM6ID4KICBTY2F0dGVyZWQgU3BpZGVyLXN0eWxlIGFjdG9ycyBoYXZlIHNvY2lhbGx5IGVuZ2luZWVyZWQgb3VyIGhlbHBkZXNrIHRvIHJlc2V0CiAgY3JlZGVudGlhbHMgb3IgTUZBIGZvciBvbmUgb3IgbW9yZSBpZGVudGl0aWVzLCByZWdpc3RlcmVkIGF0dGFja2VyLWNvbnRyb2xsZWQKICBNRkEgZGV2aWNlcywgYW5kIGFyZSBlc3RhYmxpc2hpbmcgcGVyc2lzdGVuY2UgdmlhIGNvbW1lcmNpYWwgUk1NIHRvb2xpbmcKICBhbmQvb3IgYSByb2d1ZSBmZWRlcmF0ZWQgaWRlbnRpdHkgcHJvdmlkZXIg4oCUIHdoaWxlIG1vbml0b3Jpbmcgb3VyCiAgY29sbGFib3JhdGlvbiBwbGF0Zm9ybXMgZm9yIHNpZ25zIG9mIGRldGVjdGlvbi4KcmVmZXJlbmNlczoKICAtIG5hbWU6IENJU0EgQUEyMy0zMjBBIOKAlCBTY2F0dGVyZWQgU3BpZGVyICh1cGRhdGVkIDIwMjUtMDctMjkpCiAgICB1cmw6IGh0dHBzOi8vd3d3LmNpc2EuZ292L25ld3MtZXZlbnRzL2N5YmVyc2VjdXJpdHktYWR2aXNvcmllcy9hYTIzLTMyMGEKcGFyYW1ldGVyczoKICBsb29rYmFjazogIHsgdHlwZTogZHVyYXRpb24sIGRlZmF1bHQ6ICIxMGQiIH0KICBybW1fdG9vbHM6IHsgdHlwZTogc3RyaW5nLCAgIGRlZmF1bHQ6ICJhbnlkZXNrLmV4ZSxzY3JlZW5jb25uZWN0LmNsaWVudC5leGUsdGVhbXZpZXdlci5leGUsc3BsYXNodG9wLmV4ZSxmbGVldGRlY2tfYWdlbnQuZXhlLGxldmVsLmV4ZSx0YWlsc2NhbGVkLmV4ZSxuZ3Jvay5leGUscHVsc2V3YXkuZXhlIiB9CnRhcmdldHM6CiAgIyBBYnN0cmFjdCBjYXRlZ29yaWVzIGtlZXAgdGhlIGh1bnQgcG9ydGFibGU7IHRoZSBvcHRpb25hbCBwZXItcnVudGltZSBiaW5kaW5nCiAgIyBoaW50IHBpbnMgYSBjb25jcmV0ZSBzb3VyY2Ugd2hlbiBydW5uaW5nIG9uIHRoYXQgcGxhdGZvcm0uCiAgaWFtOiAgICB7IGNhdGVnb3J5OiBpYW0sICAgICAgbmFtZTogSWRlbnRpdHkgYXVkaXQsIGh1bnRiYXNlOiB7IHByb2R1Y3Q6IGF6dXJlX2xvZ19hbmFseXRpY3MgfSB9CiAgc2llbTogICB7IGNhdGVnb3J5OiBzaWVtLCAgICAgbmFtZTogU0lFTSwgICAgICAgICAgIGh1bnRiYXNlOiB7IHByb2R1Y3Q6IGF6dXJlX2xvZ19hbmFseXRpY3MgfSB9CiAgZWRyOiAgICB7IGNhdGVnb3J5OiBlbmRwb2ludCwgbmFtZTogRURSLCAgICAgICAgICAgIGh1bnRiYXNlOiB7IHByb2R1Y3Q6IG1zYXRwIH0gfQogIGh1bnRlcjogeyBhZ2VudDogdHJ1ZSwgICAgICAgIG5hbWU6IEh1bnQgYWdlbnQgfQogIHRpZXIyOiAgeyByb2xlOiBhbmFseXN0LCAgICAgIG5hbWU6IFRpZXItMiBhbmFseXN0IH0KLS0tCgojIFNjYXR0ZXJlZCBTcGlkZXIgaWRlbnRpdHktdGFrZW92ZXIgaHVudAoKSHVudHMgdGhlIEFBMjMtMzIwQSBpbnRydXNpb24gY2hhaW46IGhlbHBkZXNrIHNvY2lhbCBlbmdpbmVlcmluZyDihpIgY3JlZGVudGlhbC9NRkEKcmVzZXRzLCBhdHRhY2tlciBNRkEtZGV2aWNlIHJlZ2lzdHJhdGlvbiwgUk1NLWJhc2VkIHBlcnNpc3RlbmNlLCByb2d1ZSBpZGVudGl0eQpmZWRlcmF0aW9uLCBhbmQgZGVmZW5kZXItc3VydmVpbGxhbmNlIG9mIGNvbGxhYm9yYXRpb24gcGxhdGZvcm1zLiBEZXRlcm1pbmlzdGljCnF1ZXJpZXMgZ2F0aGVyIHRoZSBzaWduYWxzIGluIHBhcmFsbGVsOyBhbiBhZ2VudCBjb3JyZWxhdGVzIHRoZW0gcGVyIGlkZW50aXR5Owpjb250YWlubWVudCBpcyBnYXRlZCBiZWhpbmQgYXBwcm92YWwsIGFuZCBpbmRldGVybWluYXRlIGNhc2VzIGJlaGluZCBtYW5kYXRvcnkKaHVtYW4gcmV2aWV3LgoKIyMgZmFuLW91dApwYXJhbGxlbDoKLSDihpIgcXVlcnktbWZhLXJlZ2lzdHJhdGlvbnMKLSDihpIgcXVlcnktaGVscGRlc2stcmVzZXRzCi0g4oaSIHF1ZXJ5LXJtbS1pbnN0YWxscwpqb2luOiDihpIgY29ycmVsYXRlLWlkZW50aXRpZXMKCiMjIHF1ZXJ5LW1mYS1yZWdpc3RyYXRpb25zCmBgYGtxbCB0YXJnZXQ9aWFtIHBhcmFtcz0oZGF5cz1sb29rYmFjaykKQXVkaXRMb2dzCnwgd2hlcmUgVGltZUdlbmVyYXRlZCA+IGFnbyh7e2RheXN9fSkKfCB3aGVyZSBPcGVyYXRpb25OYW1lIGluICgKICAgICJVc2VyIHJlZ2lzdGVyZWQgc2VjdXJpdHkgaW5mbyIsCiAgICAiVXNlciByZWdpc3RlcmVkIGFsbCByZXF1aXJlZCBzZWN1cml0eSBpbmZvIiwKICAgICJSZWdpc3RlciBzZWN1cml0eSBpbmZvcm1hdGlvbiIpCnwgZXh0ZW5kIEFjdG9yID0gdG9zdHJpbmcoSW5pdGlhdGVkQnkudXNlci51c2VyUHJpbmNpcGFsTmFtZSksCiAgICAgICAgIElQICAgID0gdG9zdHJpbmcoSW5pdGlhdGVkQnkudXNlci5pcEFkZHJlc3MpCnwgcHJvamVjdCBUaW1lR2VuZXJhdGVkLCBBY3RvciwgSVAsIE9wZXJhdGlvbk5hbWUsIFJlc3VsdERlc2NyaXB0aW9uCmBgYAoKIyMgcXVlcnktaGVscGRlc2stcmVzZXRzCmBgYGtxbCB0YXJnZXQ9aWFtIHBhcmFtcz0oZGF5cz1sb29rYmFjaykKQXVkaXRMb2dzCnwgd2hlcmUgVGltZUdlbmVyYXRlZCA+IGFnbyh7e2RheXN9fSkKfCB3aGVyZSBPcGVyYXRpb25OYW1lIGhhc19hbnkgKCJSZXNldCBwYXNzd29yZCIsICJSZXNldCB1c2VyIHBhc3N3b3JkIiwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICJBZG1pbiByZWdpc3RlcmVkIHNlY3VyaXR5IGluZm8iLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIkRlbGV0ZSBzZWN1cml0eSBpbmZvIikKfCBleHRlbmQgVGFyZ2V0VXNlciA9IHRvc3RyaW5nKFRhcmdldFJlc291cmNlc1swXS51c2VyUHJpbmNpcGFsTmFtZSksCiAgICAgICAgIEluaXRpYXRvciAgPSB0b3N0cmluZyhJbml0aWF0ZWRCeS51c2VyLnVzZXJQcmluY2lwYWxOYW1lKQp8IHByb2plY3QgVGltZUdlbmVyYXRlZCwgVGFyZ2V0VXNlciwgSW5pdGlhdG9yLCBPcGVyYXRpb25OYW1lCmBgYAoKIyMgcXVlcnktcm1tLWluc3RhbGxzCmBgYGtxbCB0YXJnZXQ9ZWRyIHBhcmFtcz0oZGF5cz1sb29rYmFjaywgdG9vbHM9cm1tX3Rvb2xzKQpEZXZpY2VQcm9jZXNzRXZlbnRzCnwgd2hlcmUgVGltZXN0YW1wID4gYWdvKHt7ZGF5c319KQp8IHdoZXJlIEZpbGVOYW1lIGlufiAoc3BsaXQoInt7dG9vbHN9fSIsICIsIikpCnwgd2hlcmUgSW5pdGlhdGluZ1Byb2Nlc3NBY2NvdW50TmFtZSAhaW4gKCJpdC1kZXBsb3ktc3ZjIikgICAvLyBzYW5jdGlvbmVkIGRlcGxveWVyCnwgc3VtbWFyaXplIGZpcnN0X3NlZW49bWluKFRpbWVzdGFtcCksIGhvc3RzPW1ha2Vfc2V0KERldmljZU5hbWUpCiAgICBieSBGaWxlTmFtZSwgQWNjb3VudE5hbWUKYGBgCgojIyBjb3JyZWxhdGUtaWRlbnRpdGllcwpgYGBhZ2VudCB0YXJnZXQ9aHVudGVyCm9iamVjdGl2ZTogPgogIENvcnJlbGF0ZSB0aGUgTUZBLXJlZ2lzdHJhdGlvbiwgaGVscGRlc2stcmVzZXQsIGFuZCBSTU0taW5zdGFsbCByZXN1bHRzIGJ5CiAgaWRlbnRpdHkgYW5kIHRpbWUuIEZsYWcgaWRlbnRpdGllcyBtYXRjaGluZyB0aGUgU2NhdHRlcmVkIFNwaWRlciBjaGFpbjogYQogIGhlbHBkZXNrLWluaXRpYXRlZCByZXNldCBjbG9zZWx5IGZvbGxvd2VkIGJ5IE1GQSByZWdpc3RyYXRpb24gZnJvbSBhbiBJUC9BU04KICBub3QgcHJldmlvdXNseSBhc3NvY2lhdGVkIHdpdGggdGhhdCB1c2VyLCBhbmQvb3IgUk1NIHRvb2xpbmcgZmlyc3QgYXBwZWFyaW5nCiAgb24gdGhhdCB1c2VyJ3MgaG9zdCBpbiB0aGUgc2FtZSB3aW5kb3cuIERpc3Rpbmd1aXNoIGdlbnVpbmUgb25ib2FyZGluZy9yZWZyZXNoCiAgZnJvbSB0YWtlb3Zlci4gU3VyZmFjZSBlYWNoIGZsYWdnZWQgaWRlbnRpdHkgc28gZG93bnN0cmVhbSBzdGVwcyBhcmUgc2NvcGVkCiAgdG8gaXQuCmNvbnRleHQ6IFtxdWVyeS1tZmEtcmVnaXN0cmF0aW9ucywgcXVlcnktaGVscGRlc2stcmVzZXRzLCBxdWVyeS1ybW0taW5zdGFsbHNdCnRvb2xzOiBbaWFtLCBzaWVtLCBlZHJdCnN1Y2Nlc3NfY3JpdGVyaWE6ID4KICBaZXJvIG9yIG1vcmUgaWRlbnRpdGllcyBhcmUgZmxhZ2dlZCwgZWFjaCByYXRlZCBoaWdoIHwgbWVkaXVtIHwgbG93IHdpdGggdGhlCiAgc3BlY2lmaWMgY29ycmVsYXRlZCBldmVudHMgY2l0ZWQgYXMgZXZpZGVuY2UuCm1heF9pdGVyYXRpb25zOiAxMApgYGAKCiMjIGFueS1zdXNwZWN0cwppZjogYGNvcnJlbGF0ZS1pZGVudGl0aWVzLmZsYWdnZWQgPiAwYAp0aGVuOiDihpIgcGl2b3QtcGVyc2lzdGVuY2UKZWxzZTog4oaSIGVuZAoKIyMgcGl2b3QtcGVyc2lzdGVuY2UKCiMjIyBxdWVyeS1mZWRlcmF0aW9uLWNoYW5nZXMKYGBga3FsIHRhcmdldD1pYW0gcGFyYW1zPShkYXlzPWxvb2tiYWNrKQpBdWRpdExvZ3MKfCB3aGVyZSBUaW1lR2VuZXJhdGVkID4gYWdvKHt7ZGF5c319KQp8IHdoZXJlIE9wZXJhdGlvbk5hbWUgaW4gKCJTZXQgZmVkZXJhdGlvbiBzZXR0aW5ncyBvbiBkb21haW4iLAogICAgICAgICAgICAgICAgICAgICAgICAgICJTZXQgZG9tYWluIGF1dGhlbnRpY2F0aW9uIiwKICAgICAgICAgICAgICAgICAgICAgICAgICAiQWRkIHVudmVyaWZpZWQgZG9tYWluIikKfCBwcm9qZWN0IFRpbWVHZW5lcmF0ZWQsIE9wZXJhdGlvbk5hbWUsCiAgICAgICAgICBJbml0aWF0b3IgPSB0b3N0cmluZyhJbml0aWF0ZWRCeS51c2VyLnVzZXJQcmluY2lwYWxOYW1lKSwKICAgICAgICAgIERldGFpbCAgICA9IHRvc3RyaW5nKFRhcmdldFJlc291cmNlc1swXS5kaXNwbGF5TmFtZSkKYGBgCgojIyMgcXVlcnktaXItc3VydmVpbGxhbmNlCmBgYGtxbCB0YXJnZXQ9c2llbSBwYXJhbXM9KGRheXM9bG9va2JhY2spCi8vIEJyb2FkIHN3ZWVwIG9mIElSLXRvcGljIG1haWxib3gvc2VhcmNoIGFjdGl2aXR5OyB0aGUgYWdlbnQgY29ycmVsYXRlcyB0aGUKLy8gaGl0cyBhZ2FpbnN0IHRoZSBmbGFnZ2VkIGlkZW50aXRpZXMgaW4gYGFzc2Vzcy10YWtlb3ZlcmAuCk9mZmljZUFjdGl2aXR5Cnwgd2hlcmUgVGltZUdlbmVyYXRlZCA+IGFnbyh7e2RheXN9fSkKfCB3aGVyZSBPcGVyYXRpb24gaW4gKCJTZWFyY2hRdWVyeVBlcmZvcm1lZCIsICJNZXNzYWdlc1JlYWQiLCAiTWFpbEl0ZW1zQWNjZXNzZWQiKQp8IHdoZXJlIE9mZmljZU9iamVjdElkIGhhc19hbnkgKCJpbmNpZGVudCIsICJjb21wcm9taXNlIiwgImJyZWFjaCIsCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgInNjYXR0ZXJlZCIsICJjb250YWlubWVudCIsICJzb2MiKQp8IHByb2plY3QgVGltZUdlbmVyYXRlZCwgVXNlcklkLCBPcGVyYXRpb24sIE9mZmljZU9iamVjdElkCmBgYAoKIyMgYXNzZXNzLXRha2VvdmVyCmlmfjogInRha2VuIHRvZ2V0aGVyLCB0aGUgY29ycmVsYXRlZCBldmlkZW5jZSwgZmVkZXJhdGlvbiBjaGFuZ2VzLCBhbmQgSVItc3VydmVpbGxhbmNlIGFjdGl2aXR5IGluZGljYXRlIGFuIGFjdGl2ZSBpZGVudGl0eSB0YWtlb3ZlciBjb25zaXN0ZW50IHdpdGggQUEyMy0zMjBBIHJhdGhlciB0aGFuIGJlbmlnbiBJVCBhY3Rpdml0eSIgKGNvbmZpZGVuY2U6IGhpZ2gsIGp1ZGdlPWh1bnRlcikKdGhlbjog4oaSIGNvbnRhaW4KaW5kZXRlcm1pbmF0ZTog4oaSIG1hbnVhbC1yZXZpZXcKdW5hdmFpbGFibGU6IOKGkiBtYW51YWwtcmV2aWV3ICAgICAgICAgICMgZmVkZXJhdGlvbiBvciBJUi1jaGFubmVsIGxvZ3MgbWlzc2luZzogZXNjYWxhdGUsIG5ldmVyIGNsb3NlCmVsc2U6IOKGkiBjbG9zZS13aXRoLW5vdGVzCgojIyBjb250YWluCmBgYGFjdGlvbiB0YXJnZXQ9ZWRyCn5+fnlhbWwKYXBwcm92YWw6IHJlcXVpcmVkCnRyYWNrOiBjb250YWlubWVudAp+fn4KRm9yIGVhY2ggZmxhZ2dlZCBpZGVudGl0eTogcmV2b2tlIHNlc3Npb25zLCBkaXNhYmxlIHRoZSBhY2NvdW50LCByZW1vdmUgdGhlCmF0dGFja2VyLXJlZ2lzdGVyZWQgTUZBIG1ldGhvZCwgYW5kIGlzb2xhdGUgdGhlIGFzc29jaWF0ZWQgaG9zdC4KYGBgCuKGkiBub3RpZnktb3V0LW9mLWJhbmQKCiMjIG5vdGlmeS1vdXQtb2YtYmFuZApgYGBtYW51YWwgdGFyZ2V0PXRpZXIyClRoZSBhY3RvcnMgbW9uaXRvciBUZWFtcy9TbGFjay9FeGNoYW5nZSBmb3IgSVIgZGlzY3Vzc2lvbiAoQUEyMy0zMjBBKSBhbmQgbWF5CmpvaW4gcmVzcG9uc2UgY2FsbHMuIENvb3JkaW5hdGUgY29udGFpbm1lbnQgdmlhIHRoZSBvdXQtb2YtYmFuZCBjaGFubmVsIG9ubHk7CmRvIE5PVCBkaXNjdXNzIHRoaXMgaW5jaWRlbnQgb24gY29ycG9yYXRlIGNvbGxhYm9yYXRpb24gcGxhdGZvcm1zIHVudGlsIHRoZQpmbGFnZ2VkIGlkZW50aXRpZXMgYXJlIGNvbnRhaW5lZC4KYGBgCuKGkiBlbmQKCiMjIG1hbnVhbC1yZXZpZXcKYGBgbWFudWFsIHRhcmdldD10aWVyMgpSZXZpZXcgdGhlIGV2aWRlbmNlIGZvciBlYWNoIGZsYWdnZWQgaWRlbnRpdHkuIFZlcmlmeSB0aGUgb3JpZ2luYWwgaGVscGRlc2sKaW50ZXJhY3Rpb25zIGFnYWluc3QgdGlja2V0IHJlY29yZHMgYW5kIGNhbGxlci12ZXJpZmljYXRpb24gbG9ncywgdGhlbiBlaXRoZXIKaW52b2tlIGNvbnRhaW5tZW50IG9yIGNsb3NlIHdpdGggbm90ZXMuCmBgYArihpIgZW5kCgojIyBjbG9zZS13aXRoLW5vdGVzCmBgYG1hbnVhbCB0YXJnZXQ9dGllcjIKUmVjb3JkIHRoZSBiZW5pZ24gZXhwbGFuYXRpb24gZm9yIHRoZSBjb3JyZWxhdGVkIGV2ZW50cyBpbiB0aGUgaHVudCBsb2cgYW5kCmNsb3NlLiBDb25zaWRlciB0dW5pbmcgdGhlIHNhbmN0aW9uZWQtZGVwbG95ZXIgZXhjbHVzaW9uIGxpc3QgaWYgUk1NIG5vaXNlIHdhcwp0aGUgdHJpZ2dlci4KYGBgCuKGkiBlbmQK"
+      },
+      {
+        "uuid": "1bb1d660-a153-5ad4-b6fe-e6a856c65cf2",
+        "type": "link",
+        "category": "External analysis",
+        "value": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a",
+        "to_ids": false,
+        "disable_correlation": true,
+        "comment": "CISA AA23-320A — Scattered Spider (updated 2025-07-29)"
+      }
+    ],
+    "Object": [
+      {
+        "uuid": "f91b430a-3dd8-5d15-9cf2-acb66adef3e3",
+        "name": "threat-hunt-context",
+        "meta-category": "threat-hunting",
+        "description": "Metadata describing the purpose, methodology, and resourcing of a threat hunt. One instance per MISP event; corresponds to the Purpose and Equip sections of the hunt report.",
+        "template_uuid": "6dec94ff-b74b-4cab-ad38-3d3c8308bdb3",
+        "template_version": "1",
+        "comment": "",
+        "Attribute": [
+          {
+            "uuid": "75e5d53f-6928-53d4-be79-7c549566351c",
+            "object_relation": "hunt-title",
+            "type": "text",
+            "category": "Other",
+            "value": "Scattered Spider identity-takeover hunt",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "3dad8401-57a7-53cb-992e-4d500e8fdece",
+            "object_relation": "purpose",
+            "type": "text",
+            "category": "Other",
+            "value": "Hunts the AA23-320A intrusion chain: helpdesk social engineering → credential/MFA\nresets, attacker MFA-device registration, RMM-based persistence, rogue identity\nfederation, and defender-surveillance of collaboration platforms. Deterministic\nqueries gather the signals in parallel; an agent correlates them per identity;\ncontainment is gated behind approval, and indeterminate cases behind mandatory\nhuman review.",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "30a66f58-10db-53b5-8498-c620bd817e80",
+            "object_relation": "methodology",
+            "type": "text",
+            "category": "Other",
+            "value": "structured-hypothesis-driven",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "8e3059a5-689d-50d7-8947-16004564f47c",
+            "object_relation": "status",
+            "type": "text",
+            "category": "Other",
+            "value": "Planned",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "b93fb6dc-7628-5dce-81be-3eaed16f8dda",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "Identity audit",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: iam (category: iam)"
+          },
+          {
+            "uuid": "5139210e-912a-520b-9ea9-342dc47f6dd6",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "SIEM",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: siem (category: siem)"
+          },
+          {
+            "uuid": "206ddc94-6b99-55c1-b28f-f94ad727f203",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "EDR",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: edr (category: endpoint)"
+          },
+          {
+            "uuid": "83fb3528-cc18-5612-b059-2e8d8e4038eb",
+            "object_relation": "tool",
+            "type": "text",
+            "category": "Other",
+            "value": "azure_log_analytics",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "e8de447d-eadd-57b7-ab18-9df3fd310a15",
+            "object_relation": "tool",
+            "type": "text",
+            "category": "Other",
+            "value": "msatp",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": []
+      },
+      {
+        "uuid": "9490d43a-3aeb-5540-97e2-51e7d7918cf0",
+        "name": "threat-hunt-hypothesis",
+        "meta-category": "threat-hunting",
+        "description": "A single testable hypothesis from the Scope and Execute sections of a hunt: its scoping decision, targeted ATT&CK technique(s), and analytic reasoning. One instance per hypothesis.",
+        "template_uuid": "4136cd18-3edd-49fb-90ba-24cbacacc662",
+        "template_version": "1",
+        "comment": "",
+        "Attribute": [
+          {
+            "uuid": "3de13e07-fd8a-5bfc-b781-eceb2f935866",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "6c1913fb-e614-5f1a-bf0d-6ab6583e3de4",
+            "object_relation": "hypothesis",
+            "type": "text",
+            "category": "Other",
+            "value": "Scattered Spider-style actors have socially engineered our helpdesk to reset credentials or MFA for one or more identities, registered attacker-controlled MFA devices, and are establishing persistence via commercial RMM tooling and/or a rogue federated identity provider — while monitoring our collaboration platforms for signs of detection.",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "5ae45b96-ff1f-54fd-8c2a-ab63dcefaee6",
+            "object_relation": "scope",
+            "type": "text",
+            "category": "Other",
+            "value": "In-Scope",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "5d9f99d4-4adb-5f41-a455-99ebfc72c01b",
+            "object_relation": "attack-id",
+            "type": "text",
+            "category": "Other",
+            "value": "T1621",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "0bf8d0db-1bf0-5258-910f-a3a85ae68592",
+            "object_relation": "attack-id",
+            "type": "text",
+            "category": "Other",
+            "value": "T1219",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "57773e99-8f4a-5204-a048-99fcab31275a",
+            "object_relation": "attack-id",
+            "type": "text",
+            "category": "Other",
+            "value": "T1114.002",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "2e1e627e-0bb5-5b62-bdbe-d9c1e9de1bda",
+            "object_relation": "attack-id",
+            "type": "text",
+            "category": "Other",
+            "value": "T1484.002",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "445c4f40-876a-5ce5-b498-7b37065212c9",
+            "object_relation": "analysis",
+            "type": "text",
+            "category": "Other",
+            "value": "- query-mfa-registrations [query]: kql against iam\n- query-helpdesk-resets [query]: kql against iam\n- query-rmm-installs [query]: kql against edr\n- correlate-identities [agent]: Correlate the MFA-registration, helpdesk-reset, and RMM-install results by identity and time. Flag identities matching the Scattered Spider chain: a helpdesk-initiated reset closely followed by MFA registration from an IP/ASN not previously associated with that user, and/or RMM tooling first appearing on that user's host in the same window. Distinguish genuine onboarding/refresh from takeover. Surface each flagged identity so downstream steps are scoped to it.\n- any-suspects [decision]: if correlate-identities.flagged > 0\n- pivot-persistence/query-federation-changes [query]: kql against iam\n- pivot-persistence/query-ir-surveillance [query]: kql against siem\n- assess-takeover [decision]: if taken together, the correlated evidence, federation changes, and IR-surveillance activity indicate an active identity takeover consistent with AA23-320A rather than benign IT activity\n- contain [action]: For each flagged identity: revoke sessions, disable the account, remove the\n- notify-out-of-band [task]: The actors monitor Teams/Slack/Exchange for IR discussion (AA23-320A) and may\n- manual-review [task]: Review the evidence for each flagged identity. Verify the original helpdesk\n- close-with-notes [task]: Record the benign explanation for the correlated events in the hunt log and",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "ca067575-56d5-54d7-9dc8-b917d3a7d5b9",
+            "object_relation": "status",
+            "type": "text",
+            "category": "Other",
+            "value": "Not Started",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "ae08e562-850b-509e-91bf-60721a140114",
+            "object_uuid": "9490d43a-3aeb-5540-97e2-51e7d7918cf0",
+            "referenced_uuid": "f91b430a-3dd8-5d15-9cf2-acb66adef3e3",
+            "relationship_type": "part-of",
+            "comment": ""
+          }
+        ]
+      },
+      {
+        "uuid": "6cfebae2-d541-54f8-bf73-f7c9747eb252",
+        "name": "threat-hunt-query",
+        "meta-category": "threat-hunting",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
+        "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
+        "template_version": "1",
+        "comment": "hunt.md step `query-mfa-registrations`",
+        "Attribute": [
+          {
+            "uuid": "654658b6-6103-5040-9415-ee1edf98b8d1",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "26784c3e-9c25-5d17-8d3d-153058977ae5",
+            "object_relation": "query",
+            "type": "text",
+            "category": "Other",
+            "value": "AuditLogs\n| where TimeGenerated > ago({{days}})\n| where OperationName in (\n    \"User registered security info\",\n    \"User registered all required security info\",\n    \"Register security information\")\n| extend Actor = tostring(InitiatedBy.user.userPrincipalName),\n         IP    = tostring(InitiatedBy.user.ipAddress)\n| project TimeGenerated, Actor, IP, OperationName, ResultDescription",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "hunt.md step: query-mfa-registrations"
+          },
+          {
+            "uuid": "daed31e2-3e20-526a-9513-772db6faa052",
+            "object_relation": "query-language",
+            "type": "text",
+            "category": "Other",
+            "value": "KQL",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "d8bca367-90d4-5a95-aa47-45cefc41549f",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "Identity audit",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: iam"
+          },
+          {
+            "uuid": "b07492fb-f3ca-5fab-9291-1079fb56c679",
+            "object_relation": "platform",
+            "type": "text",
+            "category": "Other",
+            "value": "azure_log_analytics",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "95f0f9e6-bfe0-502e-95aa-c447f233d363",
+            "object_relation": "comment",
+            "type": "comment",
+            "category": "Other",
+            "value": "parameters: {{days}} ← lookback",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "236b83d3-5f00-5e0e-8fd5-e40c5157c9d4",
+            "object_uuid": "6cfebae2-d541-54f8-bf73-f7c9747eb252",
+            "referenced_uuid": "9490d43a-3aeb-5540-97e2-51e7d7918cf0",
+            "relationship_type": "tests",
+            "comment": "query tests hypothesis H1"
+          }
+        ]
+      },
+      {
+        "uuid": "8b68ed14-d3f7-56d4-bd0e-7b27a37db547",
+        "name": "threat-hunt-query",
+        "meta-category": "threat-hunting",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
+        "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
+        "template_version": "1",
+        "comment": "hunt.md step `query-helpdesk-resets`",
+        "Attribute": [
+          {
+            "uuid": "40bda8b4-2a73-5623-b5b4-dd37cd3fde82",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "648137a9-c190-50e0-b6ae-35ee0de12366",
+            "object_relation": "query",
+            "type": "text",
+            "category": "Other",
+            "value": "AuditLogs\n| where TimeGenerated > ago({{days}})\n| where OperationName has_any (\"Reset password\", \"Reset user password\",\n                               \"Admin registered security info\",\n                               \"Delete security info\")\n| extend TargetUser = tostring(TargetResources[0].userPrincipalName),\n         Initiator  = tostring(InitiatedBy.user.userPrincipalName)\n| project TimeGenerated, TargetUser, Initiator, OperationName",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "hunt.md step: query-helpdesk-resets"
+          },
+          {
+            "uuid": "f329368e-d14b-5316-8822-61511097ccda",
+            "object_relation": "query-language",
+            "type": "text",
+            "category": "Other",
+            "value": "KQL",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "a13e5f20-59a1-5290-bdf9-18abfe59c079",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "Identity audit",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: iam"
+          },
+          {
+            "uuid": "5f7ce780-c70b-5781-a441-7a59b54a96cd",
+            "object_relation": "platform",
+            "type": "text",
+            "category": "Other",
+            "value": "azure_log_analytics",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "fc53d8f1-42eb-5baf-b0e2-1b95656dd4f9",
+            "object_relation": "comment",
+            "type": "comment",
+            "category": "Other",
+            "value": "parameters: {{days}} ← lookback",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "e3d9cefe-b9a9-5846-81bc-56931732236a",
+            "object_uuid": "8b68ed14-d3f7-56d4-bd0e-7b27a37db547",
+            "referenced_uuid": "9490d43a-3aeb-5540-97e2-51e7d7918cf0",
+            "relationship_type": "tests",
+            "comment": "query tests hypothesis H1"
+          }
+        ]
+      },
+      {
+        "uuid": "18e753df-96b3-58fd-93c8-53430ffd452f",
+        "name": "threat-hunt-query",
+        "meta-category": "threat-hunting",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
+        "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
+        "template_version": "1",
+        "comment": "hunt.md step `query-rmm-installs`",
+        "Attribute": [
+          {
+            "uuid": "2f208016-e368-57b0-87d7-38c2b6ef9533",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "92a2a8dd-c50e-558a-8f4f-437e7d107ccd",
+            "object_relation": "query",
+            "type": "text",
+            "category": "Other",
+            "value": "DeviceProcessEvents\n| where Timestamp > ago({{days}})\n| where FileName in~ (split(\"{{tools}}\", \",\"))\n| where InitiatingProcessAccountName !in (\"it-deploy-svc\")   // sanctioned deployer\n| summarize first_seen=min(Timestamp), hosts=make_set(DeviceName)\n    by FileName, AccountName",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "hunt.md step: query-rmm-installs"
+          },
+          {
+            "uuid": "9f04d058-121e-547c-89f7-61316d29c57c",
+            "object_relation": "query-language",
+            "type": "text",
+            "category": "Other",
+            "value": "KQL",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "4b67b740-9769-5a00-be6d-db9079137ee3",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "EDR",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: edr"
+          },
+          {
+            "uuid": "c8a7c448-21a1-594c-a1f0-0b42c0e77810",
+            "object_relation": "platform",
+            "type": "text",
+            "category": "Other",
+            "value": "msatp",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "c849a8de-6247-50ef-80b2-3f690f674349",
+            "object_relation": "comment",
+            "type": "comment",
+            "category": "Other",
+            "value": "parameters: {{days}} ← lookback, {{tools}} ← rmm_tools",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "48158dd7-6ae2-5a35-86e4-6ea2ce3bba35",
+            "object_uuid": "18e753df-96b3-58fd-93c8-53430ffd452f",
+            "referenced_uuid": "9490d43a-3aeb-5540-97e2-51e7d7918cf0",
+            "relationship_type": "tests",
+            "comment": "query tests hypothesis H1"
+          }
+        ]
+      },
+      {
+        "uuid": "2e71a6dd-3031-537a-9169-c13f6466f7ee",
+        "name": "threat-hunt-query",
+        "meta-category": "threat-hunting",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
+        "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
+        "template_version": "1",
+        "comment": "hunt.md step `pivot-persistence/query-federation-changes`",
+        "Attribute": [
+          {
+            "uuid": "0276316a-e84b-597b-bd0b-302abbf4a5c2",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "42e4a7a4-2fe9-56ef-aaa3-66cd1d966923",
+            "object_relation": "query",
+            "type": "text",
+            "category": "Other",
+            "value": "AuditLogs\n| where TimeGenerated > ago({{days}})\n| where OperationName in (\"Set federation settings on domain\",\n                          \"Set domain authentication\",\n                          \"Add unverified domain\")\n| project TimeGenerated, OperationName,\n          Initiator = tostring(InitiatedBy.user.userPrincipalName),\n          Detail    = tostring(TargetResources[0].displayName)",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "hunt.md step: pivot-persistence/query-federation-changes"
+          },
+          {
+            "uuid": "df6dfb48-644b-56ac-aba6-b382b84f4a69",
+            "object_relation": "query-language",
+            "type": "text",
+            "category": "Other",
+            "value": "KQL",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "0a9114a6-f42c-5a07-9a9c-c9a333a99425",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "Identity audit",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: iam"
+          },
+          {
+            "uuid": "52dcc545-0fc4-5add-b1a9-bbcc278d5f20",
+            "object_relation": "platform",
+            "type": "text",
+            "category": "Other",
+            "value": "azure_log_analytics",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "ddca3a31-15d2-5176-96e8-e7d1160658b6",
+            "object_relation": "comment",
+            "type": "comment",
+            "category": "Other",
+            "value": "parameters: {{days}} ← lookback",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "ca9c241b-ff51-5b71-8876-260bbf375be6",
+            "object_uuid": "2e71a6dd-3031-537a-9169-c13f6466f7ee",
+            "referenced_uuid": "9490d43a-3aeb-5540-97e2-51e7d7918cf0",
+            "relationship_type": "tests",
+            "comment": "query tests hypothesis H1"
+          }
+        ]
+      },
+      {
+        "uuid": "75c22438-f750-5a21-82a3-905520b25af4",
+        "name": "threat-hunt-query",
+        "meta-category": "threat-hunting",
+        "description": "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
+        "template_uuid": "0fc943ec-c8fd-4311-b748-249bdef0f7d8",
+        "template_version": "1",
+        "comment": "hunt.md step `pivot-persistence/query-ir-surveillance`",
+        "Attribute": [
+          {
+            "uuid": "3af19f5a-3a42-5ff7-85fc-83d5d09d36b0",
+            "object_relation": "hypothesis-id",
+            "type": "text",
+            "category": "Other",
+            "value": "H1",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "84bf4772-c966-5c55-8306-d1d0f64ac628",
+            "object_relation": "query",
+            "type": "text",
+            "category": "Other",
+            "value": "// Broad sweep of IR-topic mailbox/search activity; the agent correlates the\n// hits against the flagged identities in `assess-takeover`.\nOfficeActivity\n| where TimeGenerated > ago({{days}})\n| where Operation in (\"SearchQueryPerformed\", \"MessagesRead\", \"MailItemsAccessed\")\n| where OfficeObjectId has_any (\"incident\", \"compromise\", \"breach\",\n                                \"scattered\", \"containment\", \"soc\")\n| project TimeGenerated, UserId, Operation, OfficeObjectId",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "hunt.md step: pivot-persistence/query-ir-surveillance"
+          },
+          {
+            "uuid": "10495c97-54ac-5b10-819a-f241334f9cd4",
+            "object_relation": "query-language",
+            "type": "text",
+            "category": "Other",
+            "value": "KQL",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "89115941-a70e-5ff1-b15f-657affb8297b",
+            "object_relation": "data-source",
+            "type": "text",
+            "category": "Other",
+            "value": "SIEM",
+            "to_ids": false,
+            "disable_correlation": true,
+            "comment": "target: siem"
+          },
+          {
+            "uuid": "b7ce8ede-8121-5ff5-9a32-4b5461fd6244",
+            "object_relation": "platform",
+            "type": "text",
+            "category": "Other",
+            "value": "azure_log_analytics",
+            "to_ids": false,
+            "disable_correlation": true
+          },
+          {
+            "uuid": "f45f3321-3365-5bcc-88e3-2821ff7f39e3",
+            "object_relation": "comment",
+            "type": "comment",
+            "category": "Other",
+            "value": "parameters: {{days}} ← lookback",
+            "to_ids": false,
+            "disable_correlation": true
+          }
+        ],
+        "ObjectReference": [
+          {
+            "uuid": "dcb9ffaa-ade6-5e56-92ea-85e42032fa10",
+            "object_uuid": "75c22438-f750-5a21-82a3-905520b25af4",
+            "referenced_uuid": "9490d43a-3aeb-5540-97e2-51e7d7918cf0",
+            "relationship_type": "tests",
+            "comment": "query tests hypothesis H1"
+          }
+        ]
+      }
+    ]
+  }
+}

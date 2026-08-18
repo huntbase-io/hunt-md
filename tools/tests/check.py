@@ -13,6 +13,9 @@ Checks, in order of what tends to break:
    it is enforced rather than trusted.
 3. Every reference conversion in `examples/cacao-import/` still parses and lints.
 4. The publication guardrail works: `--max-tlp green` rejects an amber hunt.
+5. `md -> MISP -> md` is **exact** (the source rides along as an attachment), the
+   HUNT-EX objects/tags are present, a run result becomes a finding, and an
+   objects-only event (no attachment) still imports as a lint-clean draft.
 
 Exits non-zero on the first failing group, printing what differed.
 """
@@ -27,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from huntmd.cacao import cacao_to_markdown, markdown_to_cacao  # noqa: E402
+from huntmd.misp import is_misp_event, markdown_to_misp, misp_to_markdown  # noqa: E402
 from huntmd.core import (  # noqa: E402
     definition_to_markdown,
     markdown_to_definition,
@@ -270,6 +274,118 @@ report(
     "unavailable: survives md -> CACAO -> md",
     any(e.branch == "on_unavailable" for e in parse_markdown(cacao_to_markdown(markdown_to_cacao(with_unavail))).edges),
 )
+
+print("\nMISP / HUNT-EX — export, exact round-trip, finding, draft import")
+import base64  # noqa: E402
+import json  # noqa: E402
+import yaml  # noqa: E402
+
+for path in hunts:
+    md = path.read_text(encoding="utf-8")
+    try:
+        ev = markdown_to_misp(md)
+        event = ev["Event"]
+        json.dumps(ev)  # must be serialisable as-is
+        names = [o["name"] for o in event["Object"]]
+        tags = {t["name"] for t in event["Tag"]}
+        n_queries = sum(1 for s in parse_markdown(md).steps if s.kind == "query")
+        shape_ok = (
+            names.count("threat-hunt-context") == 1
+            and names.count("threat-hunt-hypothesis") == 1
+            and names.count("threat-hunt-query") == n_queries
+            and 'hunt-ex:content="hypothesis"' in tags
+            and 'hunt-ex:content="query"' in tags
+            and any(t.startswith('hunt-ex:query-language="') for t in tags)
+            and any(t.startswith("tlp:") for t in tags)
+            and all(o["template_uuid"] and o["template_version"] for o in event["Object"])
+            and all(any(r["relationship_type"] == "tests" for r in o["ObjectReference"]) for o in event["Object"] if o["name"] == "threat-hunt-query")
+        )
+        report(f"{path.name} → MISP event shape (objects + hunt-ex tags)", shape_ok, f"objects={names} tags={sorted(tags)}"[:300])
+        # Attack ids land on the hypothesis object.
+        hyp = next(o for o in event["Object"] if o["name"] == "threat-hunt-hypothesis")
+        got = sorted(a["value"] for a in hyp["Attribute"] if a["object_relation"] == "attack-id")
+        want = sorted(str(l).split(".", 1)[1].upper() for l in parse_markdown(md).meta.get("labels", []) if str(l).startswith("attack."))
+        report(f"{path.name} ATT&CK ids on hypothesis", got == want, f"{got} != {want}")
+        # Exact round-trip via the attachment.
+        report(f"{path.name} md → MISP → md is byte-exact", misp_to_markdown(json.loads(json.dumps(ev))) == md)
+        # Deterministic ids.
+        report(f"{path.name} MISP export is deterministic", json.dumps(markdown_to_misp(md), sort_keys=True) == json.dumps(ev, sort_keys=True))
+        # Objects-only (someone else's MISP instance stripped the attachment): still a lint-clean draft.
+        stripped = json.loads(json.dumps(ev))
+        stripped["Event"]["Attribute"] = [a for a in stripped["Event"]["Attribute"] if a["type"] != "attachment"]
+        report(f"{path.name} objects-only event is detected as MISP", is_misp_event(stripped))
+        draft = misp_to_markdown(stripped)
+        dpb = parse_markdown(draft)
+        derr = [str(i) for i in validate_markdown(draft, profile="format") if i.level == "error"]
+        report(
+            f"{path.name} objects-only import → draft lints clean, keeps queries + hypothesis",
+            not derr and sum(1 for s in dpb.steps if s.kind == "query") == n_queries and str(dpb.meta.get("hypothesis")).strip() == str(parse_markdown(md).meta.get("hypothesis")).strip() and "TODO" in draft,
+            "; ".join(derr[:2]) or "content drift",
+        )
+    except Exception as exc:  # noqa: BLE001
+        report(f"{path.name} MISP export", False, f"{type(exc).__name__}: {exc}")
+
+# A run result becomes a threat-hunt-finding + outcome tags.
+_kb = (ROOT / "hunts" / "kerberoasting.md").read_text(encoding="utf-8")
+_run = yaml.safe_load((ROOT / "examples" / "results" / "kerberoasting-run.yaml").read_text(encoding="utf-8"))
+_ev = markdown_to_misp(_kb, result=_run)["Event"]
+_finding = [o for o in _ev["Object"] if o["name"] == "threat-hunt-finding"]
+_ftags = {t["name"] for t in _ev["Tag"]}
+report(
+    "run result → threat-hunt-finding + hunt-ex:outcome/byproduct tags",
+    len(_finding) == 1
+    and any(r["relationship_type"] == "concludes" for r in _finding[0]["ObjectReference"])
+    and 'hunt-ex:content="finding"' in _ftags
+    and 'hunt-ex:outcome="inconclusive"' in _ftags  # suspicious ≠ confirmed
+    and 'hunt-ex:byproduct="data-source-gap"' in _ftags,  # edr was never examined
+    f"finding={len(_finding)} tags={sorted(_ftags)}"[:300],
+)
+_benign_run = {"hunt_result": {"hunt": "k", "run": "r", "disposition": "benign", "confidence": "high", "evidence_summary": {"benign_supporting": ["rotation job"]}}}
+_bt = {t["name"] for t in markdown_to_misp(_kb, result=_benign_run)["Event"]["Tag"]}
+report("benign-with-evidence → hypothesis-confirmed-benign", 'hunt-ex:outcome="hypothesis-confirmed-benign"' in _bt, str(sorted(_bt)))
+_mal = {t["name"] for t in markdown_to_misp(_kb, result={"hunt_result": {"hunt": "k", "run": "r", "disposition": "malicious"}})["Event"]["Tag"]}
+report("malicious → hypothesis-confirmed-malicious", 'hunt-ex:outcome="hypothesis-confirmed-malicious"' in _mal)
+# The misp: frontmatter block is linted against the taxonomy.
+_badmisp = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nmisp: {trigger: vibes, telemetry: [identity]}\n---\n# t\n## q\n```kql target=s\nx\n```\n→ end\n"
+report("misp: block off-vocabulary value warns under --profile misp", any("vibes" in str(i) for i in validate_markdown(_badmisp, profile="misp")))
+report("--profile format ignores the misp: block", not any("vibes" in str(i) for i in validate_markdown(_badmisp, profile="format")))
+# A hand-authored MISP event (no hunt.md provenance at all) imports as a draft.
+_foreign = {
+    "Event": {
+        "info": "Peer hunt: OAuth consent phishing",
+        "uuid": "11111111-2222-3333-4444-555555555555",
+        "threat_level_id": "2",
+        "Tag": [{"name": "tlp:amber"}, {"name": 'hunt-ex:telemetry="saas"'}, {"name": 'hunt-ex:trigger="sector-alert"'}],
+        "Attribute": [],
+        "Object": [
+            {"name": "threat-hunt-context", "Attribute": [{"object_relation": "hunt-title", "value": "OAuth consent phishing"}, {"object_relation": "purpose", "value": "ISAC alert"}]},
+            {"name": "threat-hunt-hypothesis", "Attribute": [{"object_relation": "hypothesis-id", "value": "H1"}, {"object_relation": "hypothesis", "value": "Users granted consent to a malicious app"}, {"object_relation": "attack-id", "value": "T1528"}]},
+            {"name": "threat-hunt-query", "Attribute": [{"object_relation": "query", "value": "AuditLogs | where OperationName == 'Consent to application'"}, {"object_relation": "query-language", "value": "KQL"}, {"object_relation": "data-source", "value": "AuditLogs"}]},
+            {"name": "sigma", "Attribute": [{"object_relation": "sigma", "value": "title: x\nlogsource: {product: azure}\ndetection: {sel: {OperationName: Consent to application}, condition: sel}"}, {"object_relation": "sigma-rule-name", "value": "consent-grant"}]},
+            {"name": "threat-hunt-finding", "Attribute": [{"object_relation": "outcome", "value": "True Positive"}, {"object_relation": "conclusion", "value": "Two grants to an unverified publisher."}]},
+        ],
+    }
+}
+_fmd = misp_to_markdown(_foreign)
+_fpb = parse_markdown(_fmd)
+_ferr = [str(i) for i in validate_markdown(_fmd, profile="format") if i.level == "error"]
+report(
+    "foreign MISP event → draft: kql + sigma queries, ATT&CK label, tlp, finding as review task, misp: provenance",
+    not _ferr
+    and sorted(s.lang for s in _fpb.steps if s.kind == "query") == ["kql", "sigma"]
+    and "attack.t1528" in _fpb.meta["labels"]
+    and _fpb.meta["tlp"] == "amber"
+    and any(s.kind == "task" for s in _fpb.steps)
+    and _fpb.meta["misp"]["telemetry"] == "saas"
+    and _fpb.meta["misp"]["trigger"] == "sector-alert",
+    "; ".join(_ferr[:2]) or _fmd[:300],
+)
+for fx in sorted((ROOT / "examples" / "misp-export").glob("*.json")):
+    fev = json.loads(fx.read_text(encoding="utf-8"))
+    fmd = misp_to_markdown(fev)
+    ferr = [str(i) for i in validate_markdown(fmd, profile="format") if i.level == "error"]
+    report(f"examples/misp-export/{fx.name} imports + lints", is_misp_event(fev) and not ferr, "; ".join(ferr[:2]))
+report("attachment round-trip decodes utf-8", base64.b64decode(next(a["data"] for a in _ev["Attribute"] if a["type"] == "attachment")).decode() == _kb)
 
 print("\nrun results (SPEC §12)")
 from huntmd.results import validate_result  # noqa: E402

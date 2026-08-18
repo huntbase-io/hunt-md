@@ -12,20 +12,22 @@ profile. Profiles only decide how it *renders elsewhere* and *what runs*.
 
 ## How the layers relate
 
-The three profiles are not competitors — they're different jobs, and a hunt
-passes through all of them:
+The profiles are not competitors — they're different jobs, and a hunt passes
+through all of them:
 
 ```
-hunt.md            →   runtime profile      →   interchange profile
-(author · review        (Huntbase: run it)       (CACAO v2: share it)
- · diff · render)
-   the source            the execution             the wire format
+hunt.md            →   runtime profile      →   interchange profiles
+(author · review        (Huntbase: run it)       (CACAO v2: ship the playbook)
+ · diff · render)                                 (MISP: share the hunt)
+   the source            the execution             the wire formats
 ```
 
 `hunt.md` is the **source of truth**: the artifact a human writes, a reviewer
 diffs in a PR, and version control signs. A runtime profile is where it
-*executes*. An interchange profile is how it *travels* between organizations.
-Asking which is "better" is asking whether source code is better than a build
+*executes*. An interchange profile is how it *travels* between organizations — CACAO
+carries the *executable playbook* to a SOAR, MISP carries the *hunt as
+intelligence* (hypothesis, queries, findings, HUNT-EX classification) to a
+sharing community. Asking which is "better" is asking whether source code is better than a build
 artifact — they're different stages of the same pipeline, and hunt.md is the
 stage humans work at.
 
@@ -35,38 +37,41 @@ stage humans work at.
 
 Two different questions, so two different legends. **Execution** (does it
 actually run?) is the Huntbase and docs-only columns. **Expression** (does the
-construct survive the trip?) is the CACAO column — CACAO is a transport format,
-so nothing "runs" there by design; the SOAR platform on the far side decides
-that.
+construct survive the trip?) is the CACAO and MISP columns — both are transport
+formats, so nothing "runs" there by design; the platform on the far side decides
+that. MISP is the coarser of the two on purpose: its objects describe *what the
+hunt is and found*, not *how it flows* — so the full source rides along as an
+attachment (†) and the objects hold what HUNT-EX makes searchable.
 
-| Format construct | hunt.md (source) | Huntbase (executes) | CACAO v2 (interchange) | Docs-only |
-|---|---|---|---|---|
-| `query` step | ✍️ one fenced block | ✅ runs on connectors | 📦 `x-org-query` * | 📄 rendered |
-| `collection` step | ✍️ ` ```collect ` | ✅ runs | 📦 command | 📄 |
-| `agent` step | ✍️ ` ```agent ` | ✅ runs (an agent) | 📦 `x-org-agent-directive` * | 📄 |
-| `decision` `if:` | ✍️ `if:` + `then/else` | ✅ | 📦 `if-condition` | 📄 |
-| `decision` `if~:` (fuzzy) | ✍️ `if~:` | ✅ agent-judged | 📦 `x-org-fuzzy-condition` * | 📄 |
-| `decision` `switch:` | ✍️ case list | ⚠️ chained binary | 📦 `switch-condition` | 📄 |
-| `task` (human) | ✍️ ` ```manual ` | ✅ | 📦 `manual` | 📄 |
-| `action` (change) | ✍️ ` ```action ` | ✅ approval-gated | 📦 action step | 📄 |
-| `parallel` / `join` | ✍️ `parallel:`/`join:` | ✅ | 📦 `parallel` | 📄 |
-| launch `parameters` (`{{}}`) | ✍️ frontmatter | ✅ | 📦 `playbook_variables` | 📄 |
-| runtime dataflow (`$var`) | ✍️ `out=`/`in=` | ⚠️ entity/session-scoping | 📦 `__var__` | ❌ |
-| `loop` (`while:`) | ✍️ `while:` | 🛣️ use bounded agent iteration | 📦 `while-condition` | ❌ |
-| `subplaybook` (`run:`) | ✍️ `run:` | 🛣️ launch sub-hunts separately | 📦 `playbook-action` | ❌ |
-| **guardrails** (§8.1) | ✍️ frontmatter, default-on | ✅ enforced | 📦 `x-hunt.guardrails` * | ❌ |
-| `unavailable:` branch | ✍️ `unavailable:` | ⚠️ routed as indeterminate | 📦 `on_unavailable` * | 📄 |
-| ordinal confidence | ✍️ `confidence: high` | ✅ | 📦 `x-org-fuzzy-condition` * | 📄 |
-| **run results** (§12) | ✍️ emitted, not authored | ✅ emits | ❌ no CACAO equivalent | ❌ |
-| **hypothesis** | ✍️ frontmatter | ✅ first-class | 📦 `x-hunt` * | 📄 |
-| **ATT&CK techniques** | ✍️ `labels:` | ✅ first-class | 📦 `x-hunt` * | 📄 |
-| **data requirements** | ✍️ derived from `targets:` | ✅ pre-launch check | 📦 `x-hunt` * | 📄 |
-| **human review / diff** | ✅ plain-text PR | — | — | ✅ |
+| Format construct | hunt.md (source) | Huntbase (executes) | CACAO v2 (interchange) | MISP / HUNT-EX (sharing) | Docs-only |
+|---|---|---|---|---|---|
+| `query` step | ✍️ one fenced block | ✅ runs on connectors | 📦 `x-org-query` * | 📦 `threat-hunt-query` | 📄 rendered |
+| `collection` step | ✍️ ` ```collect ` | ✅ runs | 📦 command | † | 📄 |
+| `agent` step | ✍️ ` ```agent ` | ✅ runs (an agent) | 📦 `x-org-agent-directive` * | † (summarised in `analysis`) | 📄 |
+| `decision` `if:` | ✍️ `if:` + `then/else` | ✅ | 📦 `if-condition` | † | 📄 |
+| `decision` `if~:` (fuzzy) | ✍️ `if~:` | ✅ agent-judged | 📦 `x-org-fuzzy-condition` * | † | 📄 |
+| `decision` `switch:` | ✍️ case list | ⚠️ chained binary | 📦 `switch-condition` | † | 📄 |
+| `task` (human) | ✍️ ` ```manual ` | ✅ | 📦 `manual` | † | 📄 |
+| `action` (change) | ✍️ ` ```action ` | ✅ approval-gated | 📦 action step | † | 📄 |
+| `parallel` / `join` | ✍️ `parallel:`/`join:` | ✅ | 📦 `parallel` | † | 📄 |
+| launch `parameters` (`{{}}`) | ✍️ frontmatter | ✅ | 📦 `playbook_variables` | † (noted in query `comment`) | 📄 |
+| runtime dataflow (`$var`) | ✍️ `out=`/`in=` | ⚠️ entity/session-scoping | 📦 `__var__` | † | ❌ |
+| `loop` (`while:`) | ✍️ `while:` | 🛣️ use bounded agent iteration | 📦 `while-condition` | † | ❌ |
+| `subplaybook` (`run:`) | ✍️ `run:` | 🛣️ launch sub-hunts separately | 📦 `playbook-action` | † | ❌ |
+| **guardrails** (§8.1) | ✍️ frontmatter, default-on | ✅ enforced | 📦 `x-hunt.guardrails` * | † | ❌ |
+| `unavailable:` branch | ✍️ `unavailable:` | ⚠️ routed as indeterminate | 📦 `on_unavailable` * | † | 📄 |
+| ordinal confidence | ✍️ `confidence: high` | ✅ | 📦 `x-org-fuzzy-condition` * | † | 📄 |
+| **run results** (§12) | ✍️ emitted, not authored | ✅ emits | ❌ no CACAO equivalent | 📦 `threat-hunt-finding` + `hunt-ex:outcome` | ❌ |
+| **hypothesis** | ✍️ frontmatter | ✅ first-class | 📦 `x-hunt` * | 📦 `threat-hunt-hypothesis` | 📄 |
+| **ATT&CK techniques** | ✍️ `labels:` | ✅ first-class | 📦 `x-hunt` * | 📦 `attack-id` on the hypothesis | 📄 |
+| **data requirements** | ✍️ derived from `targets:` | ✅ pre-launch check | 📦 `x-hunt` * | 📦 `data-source`/`tool` + `hunt-ex:telemetry` | 📄 |
+| **human review / diff** | ✅ plain-text PR | — | — | — | ✅ |
 
 ✍️ native syntax · ✅ executes natively · ⚠️ executes via a documented substitution ·
 🛣️ not executed today; linted with a documented alternative (roadmap) ·
 📦 exports losslessly · 📄 rendered as text · ❌ not applicable ·
-`*` carried as a CACAO extension (see §2)
+`*` carried as a CACAO extension (see §2) ·
+`†` not a MISP object; carried by the attached hunt.md source (see §3)
 
 **Reading the matrix.** hunt.md's column is full because the format was designed
 around what hunts actually contain — a hypothesis, ATT&CK coverage, data
@@ -238,7 +243,135 @@ conversions and a script that reproduces the corpus are in
 
 ---
 
-## 3. Generic / docs-only profile (no runtime)
+## 3. MISP profile (sharing — HUNT-EX taxonomy + `threat-hunt-*` objects)
+
+**MISP is where a hunt goes to be *found* by peers.** MISP now ships the
+[HUNT-EX taxonomy](https://github.com/MISP/misp-taxonomies/tree/main/hunt-ex)
+and four companion objects — `threat-hunt-context`, `threat-hunt-hypothesis`,
+`threat-hunt-query`, `threat-hunt-finding` — so a hunt can be shared as a
+structured, queryable artefact instead of a free-text report or a pile of IOCs.
+An analyst at a peer organisation filters for
+`hunt-ex:telemetry="identity"` + `hunt-ex:query-language="kusto"` and gets every
+hunt in the community they have the telemetry to reproduce.
+
+hunt.md and HUNT-EX are complementary and were designed for different moments:
+HUNT-EX classifies a hunt *at the point of sharing*; hunt.md is the *source* the
+hunt was authored and executed from. So this profile is two things at once — the
+searchable objects and tags MISP wants, and the exact source alongside them.
+
+**Mapping.**
+
+| hunt.md | MISP |
+|---|---|
+| frontmatter `name`, H1 description, `targets:` (data sources + `product` bindings) | `threat-hunt-context` — `hunt-title`, `purpose`, `data-source`, `tool`, `methodology`, `status` |
+| `hypothesis:` + `attack.tXXXX` labels | `threat-hunt-hypothesis` — `hypothesis`, `attack-id`, `hypothesis-id: H1`, `analysis` (a one-line-per-step summary of the flow), `status` |
+| every `query` step | one `threat-hunt-query` — `query`, `query-language`, `data-source` (the target), `platform` (its binding), `comment` (params + description); linked `tests` → the hypothesis |
+| a run result (SPEC §12), via `--result` | `threat-hunt-finding` — `outcome`, `conclusion` (disposition, per-step explanations, evidence summary, unexamined telemetry), `recommendation`; linked `concludes` → the hypothesis |
+| `tlp:` | `tlp:*` event tag (and MISP `distribution`) |
+| `severity:` | `threat_level_id` |
+| `references:` | `link` attributes |
+| **the whole file** | an `attachment` attribute `<slug>.hunt.md` — the exact source (†) |
+
+**Tags.** The event carries `hunt-ex:content="hypothesis"` (+ `"query"`, +
+`"finding"` when a result is exported), `hunt-ex:query-language=` for each
+query language used (hunt.md `kql` → `kusto`, `stix` → `stix-pattern`, SQL
+dialects → `sql`, unknown → `other`), `hunt-ex:telemetry=` derived from target
+categories (`iam`/`identity` → `identity`, `endpoint` → `endpoint`, `cloud` →
+`cloud-control-plane`, … — `siem` is a store, not a plane, so it contributes
+nothing on its own), and `hunt-ex:methodology=` (default
+`structured-hypothesis-driven`, since a hunt.md always has a hypothesis).
+
+Values HUNT-EX asks for that hunt.md doesn't otherwise know go in an optional,
+namespaced `misp:` frontmatter block — the same convention as `huntbase:`
+bindings on targets, and just as ignorable by every other profile:
+
+```yaml
+misp:
+  telemetry: [identity]          # overrides the category-derived value
+  trigger: intel-report          # hunt-ex:trigger
+  applicability: universal       # hunt-ex:applicability
+  handoff: keep-as-periodic-hunt # hunt-ex:handoff
+  methodology: structured-hypothesis-driven
+  contributors: [ISAC hunt team]
+  tags: ['workflow:state="complete"']   # any extra event tags, verbatim
+  distribution: 2                # MISP distribution; defaults from tlp
+```
+
+`huntmd validate --profile misp` warns when a `misp:` value is off-vocabulary,
+when a query language has no HUNT-EX mapping, when no target maps to a telemetry
+plane, or when there is no ATT&CK label — each is something a peer would filter
+on and fail to find.
+
+**Findings and outcomes.** A run result's `disposition` maps to
+`hunt-ex:outcome` conservatively: `malicious` → `hypothesis-confirmed-malicious`;
+`benign`/`potentially_benign` → `hypothesis-confirmed-benign` (a `benign` with no
+`benign_supporting` evidence — invalid under §12.2 anyway — degrades to
+`hypothesis-not-confirmed`); `suspicious` and `inconclusive` → `inconclusive`,
+because "suspicious" is precisely *not* a confirmed hypothesis. Any
+`telemetry_coverage.missing` entry adds `hunt-ex:byproduct="data-source-gap"` —
+the hunt has told you what it couldn't look at, and that is worth sharing.
+
+**Producing it.** Implemented in [`tools/huntmd/misp.py`](./tools/huntmd/misp.py):
+
+```bash
+huntmd convert hunts/kerberoasting.md --to misp -o kerberoasting.misp.json
+huntmd convert hunts/kerberoasting.md --to misp --result examples/results/kerberoasting-run.yaml
+huntmd validate hunts/kerberoasting.md --profile misp
+```
+
+The output is a standard MISP event JSON (`{"Event": {…}}`) that `PyMISP`,
+`misp-import` or the REST API accept as-is. Identifiers are `uuid5`-derived from
+the playbook id (SPEC §10), so re-exporting an unchanged hunt is stable, and an
+event can be updated in place. Object templates are pinned to
+`threat-hunt-*` v1; the taxonomy vocabularies to `hunt-ex` v4.
+
+**Verified against a live MISP** (2.5.44 via misp-docker) —
+[`tools/tests/e2e_misp.py`](./tools/tests/e2e_misp.py) pushes every repo hunt,
+fetches it back as MISP serialises it, re-imports it byte-exact, and confirms
+`restSearch` by `hunt-ex:telemetry` + `hunt-ex:query-language` finds them. What
+that surfaced, so you don't rediscover it:
+
+- **The instance must have the `threat-hunt-*` templates and `hunt-ex`
+  taxonomy.** They were merged upstream recently; images built before that
+  (2.5.44's bundle, for one) don't have them, and MISP **silently drops** any
+  object whose template it doesn't know — the event saves, tags and attachment
+  land, and the objects just aren't there. Run
+  `cake Admin updateObjectTemplates` / `updateTaxonomies` (or update the
+  `misp-objects` / `misp-taxonomies` submodules) and *enable* the `hunt-ex`
+  taxonomy first. The e2e script checks for this before pushing.
+- **Re-export ⇒ `POST /events/edit/<uuid>`, not `add`.** Ids are deterministic,
+  so a second `add` is a duplicate. Under `edit`, single-valued attributes
+  (`status`, `hypothesis`, `query`, …) have value-independent ids and are
+  *replaced*; only relations that legitimately repeat (`data-source`, `tool`,
+  `contributor`, `attack-id`) key on their value.
+- **Deleting an event blocklists its UUID.** With deterministic ids that means a
+  deleted hunt can't be re-pushed until the entry is removed from
+  `/eventBlocklists`. Prefer `edit`, or unpublish, over delete.
+- MISP requires a non-empty object `description` (the template's own is
+  emitted) and de-duplicates identical attribute values within an object.
+
+### Import (MISP → hunt.md)
+
+`huntmd convert event.json` recognises a MISP event by shape and:
+
+- if the event carries the `<slug>.hunt.md` attachment, returns that source
+  **byte-exact** — `md → MISP → md` round-trips completely, control flow and all;
+- otherwise (an event authored by a peer, or with the attachment stripped) builds
+  a **draft**: one `query` step per `threat-hunt-query` (plus any `sigma`/`yara`
+  objects in the event), `hypothesis:` and `attack.*` labels from the hypothesis
+  object, `tlp:` from the tag, targets from the queries' `data-source`s, and a
+  `threat-hunt-finding` as a `manual` review step so a re-run is compared against
+  what the peer found. HUNT-EX tags and the event UUID land in the `misp:` block
+  for provenance. Everything the objects can't say — decisions, agent steps,
+  target categories — is `TODO`-marked, and the draft lints clean so
+  `huntmd validate` points at exactly what an author still owes.
+
+An event with several `threat-hunt-hypothesis` objects imports the first and
+lists the rest under a `TODO` — hunt.md is one hypothesis per file.
+
+---
+
+## 4. Generic / docs-only profile (no runtime)
 
 A hunt.md is valuable with **zero tooling**: it renders as a readable document
 and serves as high-quality context for AI coding/analysis assistants (Claude
@@ -252,4 +385,8 @@ runtime profile.
 ## Adding a profile
 A new runtime implements: (1) IR-kind → its step model, (2) target resolution,
 (3) parameter/variable handling, (4) a capability declaration for the matrix,
-(5) a linter pass. Keep platform specifics here — never in `SPEC.md`.
+(5) a linter pass. Keep platform specifics here — never in `SPEC.md`. An
+interchange/sharing profile is the same shape minus execution:
+`X_to_playbook` / `playbook_to_X` over the IR plus a `profile == "x"` lint
+branch — [`tools/huntmd/misp.py`](./tools/huntmd/misp.py) is the smallest
+worked example (≈750 lines, both directions, one namespaced frontmatter block).
