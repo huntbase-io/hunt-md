@@ -22,17 +22,21 @@ python -m huntmd convert  ../hunts/kerberoasting.md                 # hunt.md �
 python -m huntmd convert  ../hunts/kerberoasting.md --to cacao      # hunt.md → CACAO v2 playbook JSON
 python -m huntmd convert  ../my-hunt.definition.yaml                # definition → hunt.md (best-effort inverse)
 python -m huntmd convert  ../some-cacao-playbook.json               # CACAO → hunt.md (draft, TODO-marked)
+python -m huntmd convert  ../hunts/kerberoasting.md --to misp       # hunt.md → MISP event JSON (HUNT-EX tags + threat-hunt-* objects)
+python -m huntmd convert  ../hunts/kerberoasting.md --to misp --result ../examples/results/kerberoasting-run.yaml  # + threat-hunt-finding
+python -m huntmd convert  ../some-misp-event.json                   # MISP → hunt.md (exact via attachment, else draft)
+python -m huntmd validate ../hunts/kerberoasting.md --profile misp  # HUNT-EX classifiability warnings
 python -m huntmd validate ../hunts/kerberoasting.md --max-tlp green  # publication gate (public repo policy)
 python -m huntmd validate ../examples/results/run.yaml               # lint a run result (SPEC §12)
 ```
 
-`validate` exits non-zero only on **errors**; warnings pass. Conversion direction is inferred from file extension and *shape* (`nodes` ⇒ Huntbase definition, `workflow` ⇒ CACAO), not a flag.
+`validate` exits non-zero only on **errors**; warnings pass. Conversion direction is inferred from file extension and *shape* (`Event`/`info`+`Object` ⇒ MISP event, `nodes` ⇒ Huntbase definition, `workflow` ⇒ CACAO), not a flag.
 
-CI ([.github/workflows/lint.yml](.github/workflows/lint.yml)) runs the checks below on every PR, and a separate job enforces the publication boundary (`--max-tlp green` — this repo is public). After touching `core.py`, `cacao.py` or `results.py`:
+CI ([.github/workflows/lint.yml](.github/workflows/lint.yml)) runs the checks below on every PR, and a separate job enforces the publication boundary (`--max-tlp green` — this repo is public). After touching `core.py`, `cacao.py`, `misp.py` or `results.py`:
 
 1. `validate` + `convert` (all three targets) over both files in [hunts/](hunts/).
 2. **Round-trip must stay exact** for repo hunts: `md → cacao → md` preserves step kinds, slugs, targets, parameters and every edge. This is load-bearing — it's what the CACAO profile claims in [PROFILES.md](PROFILES.md).
-3. `python tools/tests/check.py` — the actual suite (stdlib only). Covers all of the above plus guardrails, confidence/`unavailable:` handling, and result validation.
+3. `python tools/tests/check.py` — the actual suite (stdlib only). Covers all of the above plus guardrails, confidence/`unavailable:` handling, result validation, and MISP (`md → misp → md` byte-exact via the attachment; objects-only events import as lint-clean drafts).
 4. **Corpus check**: [examples/cacao-import/fetch-corpus.sh](examples/cacao-import/fetch-corpus.sh) pulls 49 real CACAO playbooks from six projects; all must import, parse and lint clean (332 steps preserved). Requires `gh` + network. The vendored conversions in [examples/cacao-import/](examples/cacao-import/) are the offline fixtures.
 
 ## Architecture
@@ -40,8 +44,8 @@ CI ([.github/workflows/lint.yml](.github/workflows/lint.yml)) runs the checks be
 ### Three layers, kept separate on purpose
 
 1. **Format** ([SPEC.md](SPEC.md)) — the IR and Markdown syntax. Vendor-neutral by rule: no product, agent, or model may be named in the core format.
-2. **Profiles** ([PROFILES.md](PROFILES.md)) — adapters from the IR to a runtime (Huntbase), an interchange target (CACAO v2), or docs-only. Platform specifics belong **here, never in SPEC.md**. The capability matrix at the top of PROFILES.md is the contract: ✅ native / ⚠️ documented substitution / ❌ lint-and-reject.
-3. **Reference implementation** ([tools/huntmd/](tools/huntmd/)) — adapters over the parsed graph: `core.py` for the Huntbase definition, `cacao.py` for CACAO v2 (both directions).
+2. **Profiles** ([PROFILES.md](PROFILES.md)) — adapters from the IR to a runtime (Huntbase), interchange/sharing targets (CACAO v2, MISP/HUNT-EX), or docs-only. Platform specifics belong **here, never in SPEC.md**. The capability matrix at the top of PROFILES.md is the contract: ✅ native / ⚠️ documented substitution / ❌ lint-and-reject.
+3. **Reference implementation** ([tools/huntmd/](tools/huntmd/)) — adapters over the parsed graph: `core.py` for the Huntbase definition, `cacao.py` for CACAO v2, `misp.py` for MISP events (all both directions).
 
 ### The pipeline in `tools/huntmd/core.py` (single ~650-line module)
 
@@ -52,9 +56,10 @@ hunt.md text
   → Playbook{name, description, meta, steps[], edges[]}    (the IR — everything hangs off this)
        ├→ playbook_to_definition   (IR → Huntbase {"hunt", "nodes":[…]})
        ├→ playbook_to_cacao        (IR → CACAO v2)          [cacao.py]
+       ├→ playbook_to_misp         (IR [+ run result] → MISP event) [misp.py]
        ├→ playbook_to_markdown     (IR → hunt.md source)    ← used by both importers
        └→ validate_markdown        (IR → list[Issue])
-  cacao_to_playbook / definition_to_markdown are the inbound halves.
+  cacao_to_playbook / misp_to_playbook / definition_to_markdown are the inbound halves.
 ```
 
 Adding another interchange format means writing `X_to_playbook` / `playbook_to_X` against the IR — never touching the parser.
@@ -69,6 +74,7 @@ Key invariants when editing:
 - **`x_hunt_*` extension keys are the round-trip's load-bearing parts.** CACAO collapses distinctions hunt.md makes — task vs action are both `manual` commands, query vs collection both `x-org-query`, and step slugs aren't recoverable from display names. `x_hunt_kind`, `x_hunt_slug`, `x_hunt_role` and `x_hunt_type` carry them across. Drop one and the round-trip silently degrades (an `action` returns as a `task`) rather than failing loudly.
 - **Guardrails are default-on and always materialised.** `effective_guardrails()` resolves document → step overrides against `_GUARDRAIL_DEFAULTS`, and `_hunt_meta`/`x_hunt` always emit the resolved set even when the author wrote no block — a runtime must never have to infer the safety posture. Relaxations warn rather than error: legal, but conspicuous in review.
 - **`indeterminate:` vs `unavailable:` is a real distinction, not a synonym.** The first means examined-but-undecided, the second means never examined. `unavailable: → end` is a lint error under the default `missing_data: not_benign`, because that's the shape of a hunt quietly concluding "benign" on data nobody looked at. The Huntbase node graph collapses both to `default`; CACAO keeps them apart via `on_unavailable`.
+- **MISP objects can't hold the graph, so the source rides along.** `playbook_to_misp` emits `threat-hunt-context/hypothesis/query[/finding]` + `hunt-ex:*` tags *and* the full `.md` as an `attachment` attribute. `misp_to_markdown` returns that attachment byte-exact when present and only builds a TODO-marked draft from the objects when it isn't. HUNT-EX-only facts (`trigger`, `telemetry` override, `handoff`, …) live in a namespaced `misp:` frontmatter block — never as new core keys. Vocabularies are pinned in `_HUNT_EX` (taxonomy v4) and `_TEMPLATES` (objects v1); bump them together with the upstream.
 - **Confidence is ordinal.** `Step.confidence` is `str | float`; ordinal is preferred and numeric warns. Don't "improve" this by normalising to a float — the point is that model-reported numeric confidence isn't calibrated.
 - **Arrow suppression depends on in-degree.** `playbook_to_markdown` omits a `→` when the successor is simply the next step in the document, but only if that successor has exactly one parent. A join or jump target needs its edge written out, or reparsing won't rebuild it (`_wire_edges` skips document-order edges into explicitly-targeted steps).
 

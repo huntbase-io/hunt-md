@@ -2,9 +2,10 @@
 
     uv run python -m huntmd convert  <file.md>            # -> definition YAML (stdout)
     uv run python -m huntmd convert  <file.md> --to cacao # -> CACAO v2 playbook JSON
+    uv run python -m huntmd convert  <file.md> --to misp [--result run.yaml]  # -> MISP event JSON (HUNT-EX)
     uv run python -m huntmd convert  <file.yaml|.json>    # -> hunt.md (stdout)
     uv run python -m huntmd convert  <file> --to md|yaml|json|cacao -o <out>
-    uv run python -m huntmd validate <file.md> [--profile huntbase|format|cacao]
+    uv run python -m huntmd validate <file.md> [--profile huntbase|format|cacao|misp]
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from huntmd.cacao import cacao_to_markdown, markdown_to_cacao
+from huntmd.misp import is_misp_event, markdown_to_misp, misp_to_markdown
 from huntmd.results import is_result_document, validate_result
 from huntmd.core import (
     ConversionError,
@@ -55,18 +57,35 @@ def _cmd_convert(args: argparse.Namespace) -> int:
             target = args.to or "yaml"
             if target == "cacao":
                 result = json.dumps(markdown_to_cacao(text), indent=2) + "\n"
+            elif target == "misp":
+                run = None
+                if args.result:
+                    rp = Path(args.result)
+                    rtext = rp.read_text(encoding="utf-8")
+                    try:
+                        run = json.loads(rtext) if rp.suffix.lower() == ".json" else yaml.safe_load(rtext)
+                    except (json.JSONDecodeError, yaml.YAMLError) as exc:
+                        raise ConversionError(f"--result {rp}: not parseable as YAML/JSON ({exc.__class__.__name__})") from exc
+                    if not is_result_document(run):
+                        raise ConversionError(f"--result {rp} is not a run result (expected 'hunt_result' root)")
+                result = json.dumps(markdown_to_misp(text, result=run), indent=2, ensure_ascii=False) + "\n"
             elif target == "json":
                 result = json.dumps(markdown_to_definition(text), indent=2)
             elif target == "yaml":
                 result = dump_yaml(markdown_to_definition(text), sort_keys=False, default_flow_style=False)
             else:
                 raise ConversionError("Converting hunt.md → md is a no-op; use --to yaml|json|cacao.")
-        elif args.to == "cacao":
-            raise ConversionError("--to cacao takes a hunt.md source (the input is already a playbook).")
+        elif args.to in ("cacao", "misp"):
+            raise ConversionError(f"--to {args.to} takes a hunt.md source (the input is already a playbook/event).")
         else:
             definition = json.loads(text) if path.suffix.lower() == ".json" else yaml.safe_load(text)
-            # Both inbound formats are JSON/YAML objects; tell them apart by shape.
-            result = cacao_to_markdown(definition) if _looks_like_cacao(definition) else definition_to_markdown(definition)
+            # All inbound formats are JSON/YAML objects; tell them apart by shape.
+            if is_misp_event(definition):
+                result = misp_to_markdown(definition)
+            elif _looks_like_cacao(definition):
+                result = cacao_to_markdown(definition)
+            else:
+                result = definition_to_markdown(definition)
     except ConversionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -114,12 +133,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hunt-md", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    c = sub.add_parser("convert", help="hunt.md ⇄ Huntbase definition")
+    c = sub.add_parser("convert", help="hunt.md ⇄ Huntbase definition / CACAO / MISP")
     c.add_argument("file")
     c.add_argument(
         "--to",
-        choices=["md", "yaml", "json", "cacao"],
-        help="output format (md input defaults to yaml; 'cacao' emits a CACAO v2 playbook)",
+        choices=["md", "yaml", "json", "cacao", "misp"],
+        help="output format (md input defaults to yaml; 'cacao' emits a CACAO v2 playbook, "
+        "'misp' a MISP event with HUNT-EX tags + threat-hunt-* objects)",
+    )
+    c.add_argument(
+        "--result",
+        metavar="RUN",
+        help="with --to misp: a run result (SPEC §12) to export as a threat-hunt-finding + hunt-ex:outcome",
     )
     c.add_argument("-o", "--output", help="write to file instead of stdout")
     c.set_defaults(func=_cmd_convert)
@@ -128,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("file")
     v.add_argument(
         "--profile",
-        choices=["huntbase", "format", "cacao"],
+        choices=["huntbase", "format", "cacao", "misp"],
         default="huntbase",
         help="lint against a runtime/interchange profile (default: huntbase)",
     )

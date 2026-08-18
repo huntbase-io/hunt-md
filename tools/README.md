@@ -30,10 +30,17 @@ huntmd convert  my-hunt.definition.yaml
 huntmd convert  hunts/my-hunt.md --to cacao
 huntmd convert  hunts/my-hunt.md --to cacao -o my-hunt.cacao.json
 
+# hunt.md → MISP event JSON (HUNT-EX taxonomy tags + threat-hunt-* objects + the source as an attachment)
+huntmd convert  hunts/my-hunt.md --to misp -o my-hunt.misp.json
+huntmd convert  hunts/my-hunt.md --to misp --result runs/my-run.yaml   # adds a threat-hunt-finding
+
+# MISP event → hunt.md (exact if it carries the attachment, otherwise a TODO-marked draft)
+huntmd convert  my-hunt.misp.json
+
 # CACAO playbook (v1.x or v2.0) → hunt.md; the input format is detected by shape
 huntmd convert  some-playbook.json -o hunts/imported.md
 
-# lint against a profile (default: huntbase; 'format' = neutral spec; 'cacao' = interchange)
+# lint against a profile (default: huntbase; 'format' = neutral spec; 'cacao' = interchange; 'misp' = HUNT-EX classifiability)
 huntmd validate hunts/my-hunt.md
 huntmd validate hunts/my-hunt.md --profile format
 
@@ -81,8 +88,18 @@ Identifiers are **deterministic** — `uuid5` over the playbook id plus
 apart from `created`/`modified`. Pin those via frontmatter to get a fully
 reproducible artifact.
 
-Both are reference implementations, not the only possible ones — another runtime
-would write its own adapter over the same parsed graph.
+**MISP event** (`--to misp`) — a standard `{"Event": {...}}` carrying the
+[HUNT-EX](https://github.com/MISP/misp-taxonomies/tree/main/hunt-ex) taxonomy
+tags (`content`, `query-language`, `telemetry`, `methodology`, plus
+`outcome`/`byproduct` when a run result is supplied with `--result`) and the
+`threat-hunt-context`, `threat-hunt-hypothesis`, `threat-hunt-query` (one per
+query step) and `threat-hunt-finding` objects with `tests`/`concludes`
+references between them. The full hunt.md source is attached, so an import is
+byte-exact; an event authored elsewhere imports as a TODO-marked draft. Details
+in [`../PROFILES.md`](../PROFILES.md) §3.
+
+All three are reference implementations, not the only possible ones — another
+runtime would write its own adapter over the same parsed graph.
 
 ## Scope / limitations (v0.1)
 - Parses the constructs in [`../SPEC.md`](../SPEC.md): frontmatter, query/collect/

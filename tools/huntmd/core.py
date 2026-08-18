@@ -925,7 +925,8 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
 
     ``format`` checks the neutral spec only; ``huntbase`` adds that runtime's
     capability gaps; ``cacao`` adds none — every construct exports (PROFILES §2),
-    so a hunt clean at ``format`` level is clean for interchange.
+    so a hunt clean at ``format`` level is clean for interchange; ``misp`` warns
+    where the HUNT-EX vocabulary can't classify the hunt (PROFILES §3).
 
     ``max_tlp`` caps the permitted sharing level: a public repository lints with
     ``max_tlp="green"`` so an ``amber``/``red`` hunt fails CI rather than being
@@ -1015,6 +1016,10 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
             for src in list(s.params.values()) + _runtime_vars(s):
                 if src.startswith("$"):
                     issues.append(Issue("warn", s.slug, f"runtime variable '{src}' → uses session/entity scoping on Huntbase (no named binding)"))
+    if profile == "misp":
+        from huntmd.misp import misp_issues  # noqa: PLC0415 - adapters import core, not vice versa
+
+        issues.extend(Issue(lvl, slug, msg) for lvl, slug, msg in misp_issues(pb))
     return issues
 
 

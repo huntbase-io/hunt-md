@@ -50,6 +50,11 @@ against the format spec and a lint pass.
 - **Portability** — prefer abstract `targets` (`category:`); add per-runtime
   `bindings` (e.g. `huntbase: { product: … }`) rather than hard-coding a product
   as the only option.
+- **Shareable via MISP** (optional, `--profile misp`) — a `category:` that maps to
+  a HUNT-EX telemetry plane (or a `misp: { telemetry: [...] }` override) and an
+  ATT&CK label, so peers filtering their MISP instance can find the hunt. Extra
+  HUNT-EX classification (`trigger`, `applicability`, `handoff`) goes in the
+  namespaced `misp:` block — see PROFILES.md §3.
 
 ## What belongs in this repository
 

@@ -110,13 +110,19 @@ cd tools && pip install -e .
 huntmd validate ../hunts/kerberoasting.md              # lint against a profile
 huntmd convert  ../hunts/kerberoasting.md              # → Huntbase definition YAML
 huntmd convert  ../hunts/kerberoasting.md --to cacao   # → CACAO v2 playbook JSON
+huntmd convert  ../hunts/kerberoasting.md --to misp    # → MISP event (HUNT-EX tags + threat-hunt-* objects)
 huntmd convert  ../my-hunt.definition.yaml             # → hunt.md (inverse)
 huntmd convert  ../some-cacao-playbook.json            # CACAO → hunt.md (draft)
+huntmd convert  ../some-misp-event.json                # MISP → hunt.md (exact if exported by huntmd, else draft)
 huntmd validate ../examples/results/kerberoasting-run.yaml  # lint a run result
 ```
 
 CACAO import/export is round-trip exact and tested against
 [49 real playbooks](./examples/cacao-import) from six independent projects.
+MISP export uses the [HUNT-EX](https://github.com/MISP/misp-taxonomies/tree/main/hunt-ex)
+taxonomy and `threat-hunt-*` objects so peers can filter for hunts they can
+reproduce; the source travels as an attachment, so import is exact
+(see [`examples/misp-export/`](./examples/misp-export)).
 
 See [`tools/README.md`](./tools/README.md) for the full CLI.
 

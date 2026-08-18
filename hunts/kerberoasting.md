@@ -18,6 +18,9 @@ targets:
   siem:   { category: siem, name: SIEM }
   hunter: { agent: true,    name: Hunt agent }
   tier2:  { role: analyst,  name: Tier-2 analyst }
+misp:                   # HUNT-EX classification when shared via MISP (PROFILES §3)
+  telemetry: [identity]
+  trigger: intel-report
 ---
 
 # Kerberoasting hunt
