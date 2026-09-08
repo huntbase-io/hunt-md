@@ -9,24 +9,18 @@ severity: high
 hypothesis: >
   Service accounts with weak passwords are being kerberoasted (RC4 TGS requests)
   from workstations outside the admin VLAN, for offline credential cracking.
-hunt:                   # why this hunt exists and what happens after (SPEC §3.1)
-  trigger: intel-report
-  applicability: universal
-  handoff: keep-as-periodic-hunt
-  justification: >
-    Service-account credentials are the shortest path from a foothold to
-    domain-wide access; a cracked SPN password is reusable until rotated and
-    invisible to MFA. Running this on a cadence is the control for that gap.
-  assets: [service accounts, Active Directory]
 references:
   - name: MITRE ATT&CK T1558.003
     url: https://attack.mitre.org/techniques/T1558/003/
 parameters:
   lookback: { type: duration, default: "14d" }
 targets:
-  siem:   { category: siem, name: SIEM, telemetry: [identity] }   # 4769 is identity telemetry, wherever it's stored
+  siem:   { category: siem, name: SIEM }
   hunter: { agent: true,    name: Hunt agent }
   tier2:  { role: analyst,  name: Tier-2 analyst }
+misp:                   # HUNT-EX classification when shared via MISP (PROFILES §3)
+  telemetry: [identity]
+  trigger: intel-report
 ---
 
 # Kerberoasting hunt

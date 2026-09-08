@@ -150,6 +150,18 @@ def _external_references(meta: dict[str, Any]) -> list[dict[str, Any]]:
     return refs
 
 
+def _first_author(meta: dict[str, Any]) -> str | None:
+    """`provenance.authors[0]` as a string — the CACAO `created_by` identity seed."""
+    prov = meta.get("provenance")
+    authors = prov.get("authors") if isinstance(prov, dict) else None
+    if not isinstance(authors, list) or not authors:
+        return None
+    first = authors[0]
+    if isinstance(first, dict):
+        return " / ".join(str(first[k]) for k in ("name", "org") if first.get(k)) or None
+    return str(first)
+
+
 def _determinism(pb: Playbook) -> str:
     """SPEC §10 determinism label — compiler-emitted, author-immutable."""
     for s in pb.steps:
@@ -195,8 +207,9 @@ def _definitions(pb: Playbook, pb_uuid: uuid.UUID) -> tuple[dict, dict, dict[str
             entry = {"type": "security-infrastructure-category", "name": name, "x_hunt_slug": slug}
             if spec.get("category"):
                 entry["category"] = [str(spec["category"])]
-            # Per-runtime binding hints stay namespaced rather than being flattened.
-            bindings = {k: v for k, v in spec.items() if isinstance(v, dict)}
+            # Per-runtime binding hints (and any other key the author put on the
+            # target) stay namespaced rather than being flattened or dropped.
+            bindings = {k: v for k, v in spec.items() if k not in ("name", "category")}
             if bindings:
                 entry["x_hunt_bindings"] = bindings
             targets[oid] = entry
@@ -267,6 +280,29 @@ def _declared_vars(s: Step, key: str) -> list[str]:
 
 
 # --- workflow ---------------------------------------------------------------
+
+#: Step attributes each kind carries in native CACAO fields; the rest travel in
+#: ``x_hunt_attrs`` on the workflow step (SPEC §2: never drop data).
+_CACAO_NATIVE_ATTRS = {
+    "query": {"target", "params", "description"},
+    "collection": {"target", "params", "description"},
+    "agent": {"target", "params", "description", "objective", "tools", "success_criteria", "max_iterations", "context"},
+    "task": {"target", "params", "description"},
+    "action": {"target", "params", "description", "approval"},
+    "decision": {"target", "params", "description"},
+}
+
+#: Frontmatter keys the playbook object carries in native CACAO fields (or that
+#: the importer regenerates); everything else travels in ``x_hunt.frontmatter``.
+_CACAO_NATIVE_FRONTMATTER = {
+    "id", "type", "name", "labels", "tlp", "severity", "hypothesis", "references", "parameters", "targets",
+    "guardrails", "created", "modified", "created_by", "x_cacao_source", "rationale", "analysis", "provenance",
+}
+
+
+def _extra_attrs(s: Step) -> dict[str, Any]:
+    native = _CACAO_NATIVE_ATTRS.get(s.kind, {"target", "params", "description"})
+    return {k: v for k, v in s.attrs.items() if k not in native and k != "cacao_id"}
 
 
 def _commands(s: Step, params_as_vars: dict[str, str]) -> list[dict[str, Any]]:
@@ -343,6 +379,9 @@ def _workflow(pb: Playbook, pb_uuid: uuid.UUID, target_ids: dict[str, str]) -> t
         step["x_hunt_slug"] = s.slug
         if s.attrs.get("description"):
             step["description"] = str(s.attrs["description"])
+        extra = _extra_attrs(s)
+        if extra:
+            step["x_hunt_attrs"] = extra
         kids = children.get(s.slug, [])
 
         if ctype == "action":
@@ -468,7 +507,7 @@ def playbook_to_cacao(pb: Playbook, *, created: str | None = None) -> dict[str, 
         "id": f"playbook--{pb_uuid}",
         "name": pb.name,
         "playbook_types": ["investigation"],
-        "created_by": f"identity--{uuid.uuid5(_NS, str(pb.meta.get('created_by') or 'hunt.md'))}",
+        "created_by": f"identity--{uuid.uuid5(_NS, str(pb.meta.get('created_by') or _first_author(pb.meta) or 'hunt.md'))}",
         "created": stamp,
         "modified": str(pb.meta.get("modified") or "") or stamp,
         "revoked": False,
@@ -512,6 +551,12 @@ def playbook_to_cacao(pb: Playbook, *, created: str | None = None) -> dict[str, 
         x_hunt["data_requirements"] = data_requirements
     if pb.meta.get("type"):
         x_hunt["hunt_type"] = pb.meta["type"]
+    for key in ("rationale", "analysis", "provenance"):
+        if pb.meta.get(key) is not None:
+            x_hunt[key] = pb.meta[key]
+    passthrough = {k: v for k, v in pb.meta.items() if k not in _CACAO_NATIVE_FRONTMATTER}
+    if passthrough:
+        x_hunt["frontmatter"] = passthrough
     playbook["x_hunt"] = x_hunt
 
     playbook["extension_definitions"] = {
@@ -688,6 +733,8 @@ def _import_step(  # noqa: C901 - one dispatch per CACAO step type
     step.attrs["cacao_id"] = raw.get("__id__", "")  # pinned original id (SPEC §10)
     if raw.get("description"):
         step.attrs["description"] = str(raw["description"])
+    if isinstance(raw.get("x_hunt_attrs"), dict):
+        step.attrs.update(raw["x_hunt_attrs"])
 
     agent_id = raw.get("agent")
     target_ids = [t for t in (raw.get("targets") or []) if isinstance(t, str)]
@@ -936,6 +983,8 @@ def _import_frontmatter(src: dict[str, Any], pb: Playbook, known_vars: set[str])
     parameters: dict[str, Any] = {}
     for name, spec in (src.get("playbook_variables") or {}).items():
         spec = spec if isinstance(spec, dict) else {}
+        if spec.get("external") is False:
+            continue  # `$var` dataflow between steps, restored from the steps' in=/out=
         entry: dict[str, Any] = {"type": spec.get("x_hunt_type") or "string"}
         if spec.get("value") not in (None, ""):
             entry["default"] = spec["value"]
@@ -953,6 +1002,12 @@ def _import_frontmatter(src: dict[str, Any], pb: Playbook, known_vars: set[str])
 
     if isinstance(x_hunt.get("guardrails"), dict):
         meta["guardrails"] = x_hunt["guardrails"]
+    for key in ("rationale", "analysis", "provenance"):
+        if x_hunt.get(key) is not None:
+            meta[key] = x_hunt[key]
+    if isinstance(x_hunt.get("frontmatter"), dict):
+        for k, v in x_hunt["frontmatter"].items():
+            meta.setdefault(k, v)
 
     meta["x_cacao_source"] = {k: src[k] for k in ("id", "spec_version", "created", "created_by") if src.get(k)}
     return meta

@@ -65,6 +65,7 @@ attachment (†) and the objects hold what HUNT-EX makes searchable.
 | **hypothesis** | ✍️ frontmatter | ✅ first-class | 📦 `x-hunt` * | 📦 `threat-hunt-hypothesis` | 📄 |
 | **ATT&CK techniques** | ✍️ `labels:` | ✅ first-class | 📦 `x-hunt` * | 📦 `attack-id` on the hypothesis | 📄 |
 | **data requirements** | ✍️ derived from `targets:` | ✅ pre-launch check | 📦 `x-hunt` * | 📦 `data-source`/`tool` + `hunt-ex:telemetry` | 📄 |
+| **unknown keys / attrs** (§2) | ✍️ any frontmatter key, any `~~~yaml` attr | 📦 `x_hunt_frontmatter` / `x_hunt_attrs` | 📦 `x-hunt.frontmatter` / `x_hunt_attrs` * | † | 📄 |
 | **human review / diff** | ✅ plain-text PR | — | — | — | ✅ |
 
 ✍️ native syntax · ✅ executes natively · ⚠️ executes via a documented substitution ·
@@ -276,40 +277,50 @@ searchable objects and tags MISP wants, and the exact source alongside them.
 `"finding"` when a result is exported), `hunt-ex:query-language=` for each
 query language used (hunt.md `kql` → `kusto`, `stix` → `stix-pattern`, SQL
 dialects → `sql`, unknown → `other`), `hunt-ex:telemetry=` derived from target
-categories (`iam`/`identity` → `identity`, `endpoint` → `endpoint`, `cloud` →
-`cloud-control-plane`, … — `siem` is a store, not a plane, so it contributes
-nothing on its own), and `hunt-ex:methodology=` (default
-`structured-hypothesis-driven`, since a hunt.md always has a hypothesis).
+planes (SPEC §6: declared `telemetry:` on a store, or derived from a plane
+category — `siem` is a store, not a plane, so it contributes nothing on its
+own), and `hunt-ex:methodology=` (default `structured-hypothesis-driven`,
+since a hunt.md always has a hypothesis).
 
-Values HUNT-EX asks for that hunt.md doesn't otherwise know go in an optional,
-namespaced `misp:` frontmatter block — the same convention as `huntbase:`
+The classification HUNT-EX asks for is read from the neutral `hunt:` block
+(SPEC §3.3) — `trigger`, `methodology`, `applicability`, `handoff` — and the
+telemetry planes from the targets (SPEC §6), so a hunt classifies for sharing
+without any MISP-specific content. What remains in the optional, namespaced
+`misp:` block is genuinely MISP-only — the same convention as `huntbase:`
 bindings on targets, and just as ignorable by every other profile:
 
 ```yaml
 misp:
-  telemetry: [identity]          # overrides the category-derived value
-  trigger: intel-report          # hunt-ex:trigger
-  applicability: universal       # hunt-ex:applicability
-  handoff: keep-as-periodic-hunt # hunt-ex:handoff
-  methodology: structured-hypothesis-driven
   contributors: [ISAC hunt team]
   tags: ['workflow:state="complete"']   # any extra event tags, verbatim
   distribution: 2                # MISP distribution; defaults from tlp
+  purpose: …                     # context.purpose, when the H1 description isn't it
 ```
 
-`huntmd validate --profile misp` warns when a `misp:` value is off-vocabulary,
-when a query language has no HUNT-EX mapping, when no target maps to a telemetry
-plane, or when there is no ATT&CK label — each is something a peer would filter
-on and fail to find.
+*Deprecated in 0.6, still honoured:* `misp.trigger` / `methodology` /
+`applicability` / `handoff` (now `hunt.*`) and `misp.telemetry` (now
+`targets.<slug>.telemetry`). The exporter reads the new home first, the old one
+second, and `--profile misp` prints an info-level "moved" notice for each. They
+are removed in a later minor version.
 
-**Findings and outcomes.** A run result's `disposition` maps to
-`hunt-ex:outcome` conservatively: `malicious` → `hypothesis-confirmed-malicious`;
-`benign`/`potentially_benign` → `hypothesis-confirmed-benign` (a `benign` with no
-`benign_supporting` evidence — invalid under §12.2 anyway — degrades to
-`hypothesis-not-confirmed`); `suspicious` and `inconclusive` → `inconclusive`,
-because "suspicious" is precisely *not* a confirmed hypothesis. Any
-`telemetry_coverage.missing` entry adds `hunt-ex:byproduct="data-source-gap"` —
-the hunt has told you what it couldn't look at, and that is worth sharing.
+`huntmd validate --profile misp` warns when a legacy `misp:` value is
+off-vocabulary, when a query language has no HUNT-EX mapping, when no target
+maps to a telemetry plane, or when there is no ATT&CK label — each is something
+a peer would filter on and fail to find.
+
+**Findings and outcomes.** A run result that records `outcome`, `byproducts`,
+`handoff` and `period` (SPEC §12.3) exports them as-is: `hunt-ex:outcome=`,
+one `hunt-ex:byproduct=` per entry, `hunt-ex:handoff=`, and
+`period-start`/`period-end` on the context object. Without a recorded
+`outcome`, the exporter falls back to a conservative mapping from
+`disposition` and says so in the finding's `conclusion`: `malicious` →
+`hypothesis-confirmed-malicious`; `benign`/`potentially_benign` →
+`hypothesis-confirmed-benign` (a `benign` with no `benign_supporting` evidence
+— invalid under §12.2 anyway — degrades to `hypothesis-not-confirmed`);
+`suspicious` and `inconclusive` → `inconclusive`, because "suspicious" is
+precisely *not* a confirmed hypothesis. Any `telemetry_coverage.missing` entry
+adds `hunt-ex:byproduct="data-source-gap"` whether or not it was listed — the
+hunt has told you what it couldn't look at, and that is worth sharing.
 
 **Producing it.** Implemented in [`tools/huntmd/misp.py`](./tools/huntmd/misp.py):
 
@@ -325,7 +336,7 @@ the playbook id (SPEC §10), so re-exporting an unchanged hunt is stable, and an
 event can be updated in place. Object templates are pinned to
 `threat-hunt-*` v1; the taxonomy vocabularies to `hunt-ex` v4.
 
-**Verified against a live MISP** (2.5.44 via misp-docker) —
+**Verified against a live MISP** (2.5.44 and, for 0.6, 2.5.45 via misp-docker) —
 [`tools/tests/e2e_misp.py`](./tools/tests/e2e_misp.py) pushes every repo hunt,
 fetches it back as MISP serialises it, re-imports it byte-exact, and confirms
 `restSearch` by `hunt-ex:telemetry` + `hunt-ex:query-language` finds them. What
@@ -333,12 +344,22 @@ that surfaced, so you don't rediscover it:
 
 - **The instance must have the `threat-hunt-*` templates and `hunt-ex`
   taxonomy.** They were merged upstream recently; images built before that
-  (2.5.44's bundle, for one) don't have them, and MISP **silently drops** any
-  object whose template it doesn't know — the event saves, tags and attachment
-  land, and the objects just aren't there. Run
+  (2.5.44's and 2.5.45's bundles, for two) don't have them, and MISP
+  **silently drops** any object whose template it doesn't know — the event
+  saves, tags and attachment land, and the objects just aren't there. Run
   `cake Admin updateObjectTemplates` / `updateTaxonomies` (or update the
   `misp-objects` / `misp-taxonomies` submodules) and *enable* the `hunt-ex`
-  taxonomy first. The e2e script checks for this before pushing.
+  taxonomy first. The e2e script checks for this before pushing. The
+  misp-docker core image has no `git`, so the practical route is: fetch
+  `hunt-ex/machinetag.json` and the four `threat-hunt-*/definition.json`
+  files from GitHub, `docker cp` them under
+  `/var/www/MISP/app/files/{taxonomies,misp-objects/objects}/`, `chown` to
+  `www-data`, then `POST /taxonomies/update` and `POST /objectTemplates/update`.
+- **misp-docker setup that works:** copy `template.env` to `.env`, set
+  `BASE_URL=https://localhost:8443`, `CORE_HTTPS_PORT=8443`,
+  `CORE_HTTP_PORT=8080` (the variable names are `CORE_*`, not `HTTPS_PORT`),
+  and `ADMIN_KEY=` to a value that is **exactly 40 alphanumerics** — a 39-char
+  key is rejected at init with a log line and no key is set.
 - **Re-export ⇒ `POST /events/edit/<uuid>`, not `add`.** Ids are deterministic,
   so a second `add` is a duplicate. Under `edit`, single-valued attributes
   (`status`, `hypothesis`, `query`, …) have value-independent ids and are
@@ -361,8 +382,10 @@ that surfaced, so you don't rediscover it:
   objects in the event), `hypothesis:` and `attack.*` labels from the hypothesis
   object, `tlp:` from the tag, targets from the queries' `data-source`s, and a
   `threat-hunt-finding` as a `manual` review step so a re-run is compared against
-  what the peer found. HUNT-EX tags and the event UUID land in the `misp:` block
-  for provenance. Everything the objects can't say — decisions, agent steps,
+  what the peer found. HUNT-EX classification tags land in `hunt:`, telemetry
+  tags on the targets, and the event UUID in `provenance.source` (SPEC §3.6);
+  `contributor`, `rationale` and `analysis` come back as `provenance.authors`,
+  `rationale:` and `analysis:`. Everything the objects can't say — decisions, agent steps,
   target categories — is `TODO`-marked, and the draft lints clean so
   `huntmd validate` points at exactly what an author still owes.
 
@@ -379,6 +402,31 @@ Code, Copilot, Cursor) and knowledge bases. No execution, no connectors —
 queries and steps are read, not run. This is the on-ramp: a hunt authored here
 is immediately useful, and gains execution the moment it's imported into a
 runtime profile.
+
+---
+
+## 5. Quality profile (opt-in lint, no runtime)
+
+`huntmd validate --profile quality` runs every format-level check plus the
+rules that make a hunt more than a rule. None of them is a format error and
+none runs under the default profiles, so a 0.5 hunt lints exactly as it did;
+a generation pipeline, a curated library or a PR gate turns them on.
+
+| rule | why |
+|---|---|
+| a query is a literal indicator list (five or more literals in one `in (…)` and nothing that stacks or baselines) — and, if *every* query is, the hunt is | indicators rot; a list with a hypothesis attached is a rule |
+| an `if~:` whose branches all reach the same step | the judgement changes nothing |
+| a `manual` task whose prose says *isolate / disable / delete / quarantine / revoke / wipe / terminate / reset the…* | a change to the estate should be a gated ```` ```action ```` step |
+| an `agent` step whose `max_iterations` is below its `context` count | it cannot finish |
+| a `references` entry with no `url` | a reviewer cannot verify the logic |
+| no `hunt.justification` (SPEC §3.3) | a negative result is indefensible without it |
+| an `unavailable:` branch that names no `blind_spot` (SPEC §3.5) | the dead end has no recorded cost |
+| fewer than two `scenario` stages `covered` (SPEC §3.4) | a one-stage hunt is a rule |
+| `verified_at` older than 180 days (SPEC §5.5) | the verification claim is folklore |
+| a query target that resolves to no telemetry plane (SPEC §6) | data requirements are not checkable (an info under the default profiles) |
+
+All warnings; the exit code is unaffected. The repository's own hunts pass it,
+and `tools/tests/check.py` keeps them passing.
 
 ---
 

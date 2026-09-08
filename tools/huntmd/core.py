@@ -33,12 +33,135 @@ _PRIMITIVE_KINDS = {"query", "collection"}
 
 # Fenced-block language -> kind (a DSL language => query).
 _BLOCK_LANG_KIND = {"agent": "agent", "manual": "task", "action": "action", "collect": "collection"}
-# Languages the Huntbase runtime can execute (others: portability lint).
-_HUNTBASE_DSLS = {"kql", "spl", "esql", "esdsl", "aql", "mysql", "osquery", "sqlite", "cypher", "stix"}
-# Known languages for the open format (broader than Huntbase's executable set).
-_KNOWN_DSLS = _HUNTBASE_DSLS | {"sql", "eql", "sigma", "yara", "kestrel"}
+# Languages the Huntbase runtime can execute (others: portability lint), and
+# the languages the open format knows — both derived from LANGUAGES below.
 
 _SEVERITY_ORDINAL = {"critical", "high", "medium", "low"}
+
+#: Query-language table (SPEC §5.1) — the single source the linter, the Huntbase
+#: profile and the MISP exporter read. ``tag`` is the fence language; ``hunt_ex``
+#: the HUNT-EX ``query-language`` value it shares as; ``huntbase`` whether that
+#: runtime executes it.
+LANGUAGES: tuple[tuple[str, str, bool], ...] = (
+    ("kql", "kusto", True),
+    ("kusto", "kusto", True),
+    ("spl", "spl", True),
+    ("esql", "esql", True),
+    ("eql", "eql", False),
+    ("esdsl", "other", True),  # Elasticsearch Query DSL: HUNT-EX has no peer; `kibana-query` is KQL-the-other-one
+    ("aql", "aql", True),
+    ("xql", "xql", False),
+    ("cql", "cql", False),
+    ("sql", "sql", False),
+    ("mysql", "sql", True),
+    ("sqlite", "sql", True),
+    ("osquery", "sql", True),
+    ("cypher", "other", True),
+    ("kestrel", "other", False),
+    ("sigma", "sigma", False),
+    ("yara", "yara", False),
+    ("yara-l", "yara-l", False),
+    ("stix", "stix-pattern", True),
+    ("suricata", "suricata-snort", False),
+    ("snort", "suricata-snort", False),
+    ("shell", "shell", False),
+    ("bash", "shell", False),
+    ("powershell", "powershell", False),
+    ("python", "python", False),
+    ("pseudocode", "pseudocode", False),
+)
+LANGUAGE_TO_HUNT_EX = {tag: hx for tag, hx, _ in LANGUAGES}
+
+#: HUNT-EX vocabularies (misp-taxonomies/hunt-ex v4). The neutral ``hunt:``
+#: block (SPEC §3.1) and run results (§12) use these directly, so a hunt is
+#: classifiable without a MISP-specific block.
+HUNT_EX_VOCAB: dict[str, tuple[str, ...]] = {
+    "methodology": ("structured-hypothesis-driven", "unstructured-baseline", "model-assisted"),
+    "trigger": (
+        "intel-report", "sector-alert", "prior-hunt", "incident-followup", "red-team", "purple-team",
+        "crown-jewel", "detection-gap", "analyst-intuition", "ioc-sweep",
+    ),
+    "outcome": (
+        "hypothesis-confirmed-malicious", "hypothesis-confirmed-benign", "hypothesis-not-confirmed", "inconclusive",
+    ),
+    "byproduct": ("detection-gap", "data-source-gap", "tooling-gap", "process-gap", "vuln-or-misconfig"),
+    "content": ("hypothesis", "query", "finding"),
+    "telemetry": ("endpoint", "network", "identity", "email", "cloud-control-plane", "cloud-workload", "saas", "ot-ics"),
+    "query-language": (
+        "sigma", "yara", "suricata-snort", "stix-pattern", "spl", "kusto", "eql", "esql", "kibana-query", "aql",
+        "xql", "yara-l", "cql", "devo-linq", "sql", "shell", "powershell", "python", "pseudocode", "other",
+    ),
+    "applicability": ("universal", "sector-specific", "environment-specific", "campaign-specific"),
+    "handoff": (
+        "promote-to-detection", "keep-as-periodic-hunt", "retire", "escalated-to-ir", "handed-to-detection-engineering",
+    ),
+}
+
+#: The neutral ``hunt:`` frontmatter block (SPEC §3.1): programme-level facts
+#: about the hunt — why it exists and what happens after — in closed vocabularies
+#: shared with HUNT-EX, plus the business justification behind it.
+HUNT_BLOCK_KEYS = ("trigger", "methodology", "applicability", "handoff", "justification", "assets", "review_by")
+_HUNT_BLOCK_VOCAB = {k: HUNT_EX_VOCAB[k] for k in ("trigger", "methodology", "applicability", "handoff")}
+
+#: Telemetry planes (SPEC §6) — what an organisation knows it has or lacks. A
+#: target ``category`` that unambiguously names a plane derives it; a store
+#: (``siem``, ``datalake``) must state ``telemetry:`` explicitly.
+TELEMETRY_PLANES = HUNT_EX_VOCAB["telemetry"]
+CATEGORY_TO_TELEMETRY = {
+    "endpoint": "endpoint", "edr": "endpoint", "network": "network", "iam": "identity", "identity": "identity",
+    "email": "email", "cloud": "cloud-control-plane", "cloud-control-plane": "cloud-control-plane",
+    "cloud-workload": "cloud-workload", "saas": "saas", "ot": "ot-ics", "ics": "ot-ics", "ot-ics": "ot-ics",
+}
+
+
+_HUNTBASE_DSLS = {tag for tag, _, hb in LANGUAGES if hb}
+_KNOWN_DSLS = {tag for tag, _, _ in LANGUAGES}
+
+
+#: Provenance (SPEC §3.6): who wrote it, where it came from, whether a machine drafted it.
+PROVENANCE_SOURCE_SYSTEMS = ("misp", "cacao", "huntbase", "url", "other")
+PROVENANCE_GATES = ("dry-run", "lint", "critic", "executed", "human-review")
+
+#: Scenario coverage status (SPEC §3.4): what the hunt says about each stage of
+#: the intrusion chain it was written from.
+COVERAGE_STATUS = ("covered", "not_visible", "out_of_scope", "existing_rule")
+_TECHNIQUE_ID = re.compile(r"^T\d{4}(?:\.\d{3})?$", re.I)
+
+
+def scenario_stages(meta: dict[str, Any]) -> list[dict[str, Any]]:
+    scenario = meta.get("scenario")
+    stages = scenario.get("stages") if isinstance(scenario, dict) else None
+    return [s for s in (stages or []) if isinstance(s, dict)] if isinstance(stages, list) else []
+
+
+def hunt_block(meta: dict[str, Any]) -> dict[str, Any]:
+    """The ``hunt:`` block, with the deprecated ``misp:`` keys as a fallback.
+
+    Reads ``hunt:`` first; a classification key still living under ``misp:`` is
+    honoured (one minor version of soft deprecation, see PROFILES §3) so a 0.5
+    hunt classifies exactly as it did.
+    """
+    block = meta.get("hunt")
+    out = dict(block) if isinstance(block, dict) else {}
+    legacy = meta.get("misp")
+    if isinstance(legacy, dict):
+        for k in ("trigger", "methodology", "applicability", "handoff"):
+            if k not in out and legacy.get(k) is not None:
+                out[k] = legacy[k]
+    return out
+
+
+def target_telemetry(target: dict[str, Any]) -> list[str]:
+    """Telemetry planes a data-source target covers: declared, else derived from category."""
+    declared = target.get("telemetry")
+    if declared:
+        return [str(v) for v in ([declared] if isinstance(declared, str) else declared)]
+    plane = CATEGORY_TO_TELEMETRY.get(str(target.get("category", "")).lower())
+    return [plane] if plane else []
+
+
+def _is_data_source(target: dict[str, Any]) -> bool:
+    return not (target.get("agent") or target.get("role") or target.get("individual"))
 
 #: TLP:2.0 sharing levels, least to most restricted. Used by `--max-tlp` so a
 #: public repository can mechanically reject hunts that shouldn't leave the org.
@@ -136,6 +259,12 @@ class Edge:
     kind: str = "sequence"  # sequence | merge
 
 
+#: Query-step verification contract (SPEC §5.5) and silence semantics (§5.6).
+VERIFIED = ("none", "dry-run", "executed")
+SILENCE = ("not_evidence_of_absence", "evidence_of_absence")
+_QUERY_CONTRACT_KEYS = ("source", "reads", "verified", "verified_at", "expected", "silence")
+
+
 @dataclass
 class Step:
     slug: str
@@ -154,6 +283,7 @@ class Step:
     # `unavailable: → end` closes a hunt on data it never examined (SPEC §7.2).
     # The edge itself vanishes (end is implicit), so the intent is recorded here.
     unavailable_to_end: bool = False
+    else_to_end: bool = False  # `else: → end` written explicitly (lint only; end is implicit in the IR)
     # switch/parallel/subplaybook (kept for round-trip + linting)
     branches: list[str] = field(default_factory=list)
     join: str | None = None
@@ -215,18 +345,29 @@ def _parse_info_string(info: str) -> tuple[str, dict[str, Any]]:
 
 
 def _extract_inner_yaml(body: str) -> tuple[dict[str, Any], str]:
-    """Pull a leading ``~~~yaml ... ~~~`` block out of a fenced-block body."""
+    """Pull a ``~~~yaml ... ~~~`` block out of a fenced-block body.
+
+    The block may lead the body (the common form for actions) or trail it (the
+    form SPEC §8.1 shows for a per-step guardrail override on an agent step).
+    """
     lines = body.splitlines()
     if lines and lines[0].strip().startswith("~~~"):
         for i in range(1, len(lines)):
             if lines[i].strip().startswith("~~~"):
-                inner = "\n".join(lines[1:i])
-                try:
-                    parsed = yaml.safe_load(inner) or {}
-                except yaml.YAMLError:
-                    parsed = {}
-                return (parsed if isinstance(parsed, dict) else {}), "\n".join(lines[i + 1 :]).strip()
+                return _yaml_dict("\n".join(lines[1:i])), "\n".join(lines[i + 1 :]).strip()
+    if lines and lines[-1].strip().startswith("~~~"):
+        for i in range(len(lines) - 2, -1, -1):
+            if lines[i].strip().startswith("~~~"):
+                return _yaml_dict("\n".join(lines[i + 1 : -1])), "\n".join(lines[:i]).strip()
     return {}, body
+
+
+def _yaml_dict(text: str) -> dict[str, Any]:
+    try:
+        parsed = yaml.safe_load(text) or {}
+    except yaml.YAMLError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _iter_sections(body: str):
@@ -355,14 +496,23 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
                 out_edges.append((t, "on_supports", "sequence"))
         elif line.startswith("else:"):
             t = _target_of(line.split(":", 1)[1])
-            if t:
+            if t == "end":
+                step.else_to_end = True
+            elif t:
                 out_edges.append((t, "on_refutes", "sequence"))
         elif line.startswith("indeterminate:"):
             t = _target_of(line.split(":", 1)[1])
             if t:
                 out_edges.append((t, "default", "sequence"))
         elif line.startswith("unavailable:"):
-            t = _target_of(line.split(":", 1)[1])
+            rest = line.split(":", 1)[1]
+            # `unavailable: → escalate-gap (blind_spot: no-ca-audit)` names the
+            # §3.5 record this dead end is the cost of.
+            bm = re.search(r"\(\s*blind_spot\s*:\s*([A-Za-z0-9_.-]+)\s*\)", rest)
+            if bm:
+                step.attrs["blind_spot"] = bm.group(1)
+                rest = rest[: bm.start()] + rest[bm.end() :]
+            t = _target_of(rest)
             if t == "end":
                 step.unavailable_to_end = True
             elif t:
@@ -517,6 +667,24 @@ def _rewrite_placeholders(body: str, params: dict[str, str]) -> str:
     return body
 
 
+#: Step attributes each kind carries natively in the definition; everything else
+#: rides in ``x_hunt_attrs`` so the runtime ignores it and the exporter restores
+#: it (SPEC §2: spill to Tier 2, never drop).
+_DEFINITION_NATIVE_ATTRS = {
+    "query": {"target", "params", *_QUERY_CONTRACT_KEYS},
+    "collection": {"target", "params", *_QUERY_CONTRACT_KEYS},
+    "agent": {"objective", "tools", "context", "success_criteria", "max_iterations", "in", "out", "target", "params"},
+    "decision": {"checkpoint_type", "target", "params"},
+    "task": {"target", "params"},
+    "action": {"approval", "track", "target", "params"},
+}
+
+
+def _extra_attrs(s: Step) -> dict[str, Any]:
+    native = _DEFINITION_NATIVE_ATTRS.get(s.kind, {"target", "params"})
+    return {k: v for k, v in s.attrs.items() if k not in native}
+
+
 def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
     parents: dict[str, list[dict[str, Any]]] = {}
     for e in pb.edges:
@@ -547,8 +715,20 @@ def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
             # the runtime ignores this extra key, the exporter reads it back).
             if s.target:
                 node["primitive_config"]["target"] = s.target
+            # The verification contract (SPEC §5.5) and silence semantics (§5.6)
+            # are what a runtime preflights and reports on, so they are named
+            # keys rather than opaque passthrough.
+            for key in _QUERY_CONTRACT_KEYS:
+                if key in s.attrs:
+                    node["primitive_config"][key] = s.attrs[key]
+            extra = _extra_attrs(s)
+            if extra:
+                node["primitive_config"]["x_hunt_attrs"] = extra
         else:
             node["config"] = _config_for(s)
+            extra = _extra_attrs(s)
+            if extra:
+                node["config"]["x_hunt_attrs"] = extra
         if s.slug in parents:
             node["parents"] = parents[s.slug]
         nodes.append(node)
@@ -585,12 +765,24 @@ def _config_for(s: Step) -> dict[str, Any]:
     return {"body": s.body.strip(), **s.attrs}
 
 
+#: Frontmatter keys the definition carries as first-class ``meta`` entries.
+_DEFINITION_META_KEYS = (
+    "labels", "severity", "tlp", "hypothesis", "rationale", "analysis", "references", "parameters", "targets", "type",
+    "hunt", "scenario", "coverage", "blind_spots", "provenance",
+)
+
+
 def _hunt_meta(pb: Playbook) -> dict[str, Any]:
-    keep = ("labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type")
-    meta = {k: pb.meta[k] for k in keep if k in pb.meta}
+    meta = {k: pb.meta[k] for k in _DEFINITION_META_KEYS if k in pb.meta}
     # Always resolved, never omitted: a runtime must receive the safety posture
     # even when the author didn't write the block (SPEC §8.1).
     meta["guardrails"] = effective_guardrails(pb.meta)
+    # Everything else the author wrote travels verbatim (SPEC §2) — a profile
+    # block, a key from a newer spec revision, a private extension. The runtime
+    # ignores it; the exporter restores it.
+    extra = {k: v for k, v in pb.meta.items() if k not in _DEFINITION_META_KEYS and k != "guardrails"}
+    if extra:
+        meta["x_hunt_frontmatter"] = extra
     return meta
 
 
@@ -609,9 +801,16 @@ _FM_ORDER = (
     "tlp",
     "severity",
     "hypothesis",
+    "rationale",
+    "analysis",
+    "hunt",
+    "scenario",
+    "coverage",
+    "blind_spots",
     "references",
     "parameters",
     "targets",
+    "provenance",
 )
 #: Attribute keys rendered by native syntax, so they never repeat in a Tier-2 block.
 _NATIVE_ATTRS = {
@@ -625,7 +824,8 @@ _NATIVE_ATTRS = {
     "out",
     "target",
     "params",
-    "description",
+    "track",
+    "blind_spot",
 }
 
 
@@ -685,8 +885,10 @@ def playbook_to_markdown(pb: Playbook) -> str:
         elif s.kind in ("task", "action"):
             block = "manual" if s.kind == "task" else "action"
             out.append(f"```{block}{info}")
-            if s.kind == "action" and s.attrs.get("approval"):
-                out += ["~~~yaml", f"approval: {s.attrs['approval']}", "~~~"]
+            if s.kind == "action":
+                gate = {k: s.attrs[k] for k in ("approval", "track") if s.attrs.get(k)}
+                if gate:
+                    out += ["~~~yaml", _dump(gate, sort_keys=False).strip(), "~~~"]
             out += [s.body.rstrip(), "```"]
         elif s.kind == "decision":
             if s.switch_cases:
@@ -716,11 +918,12 @@ def playbook_to_markdown(pb: Playbook) -> str:
                     ("on_unavailable", "unavailable"),
                     ("on_refutes", "else"),
                 ):
+                    tail = f" (blind_spot: {s.attrs['blind_spot']})" if keyword == "unavailable" and s.attrs.get("blind_spot") else ""
                     for to, br in children.get(s.slug, []):
                         if br == branch:
-                            out.append(f"{keyword}: → {to}")
+                            out.append(f"{keyword}: → {to}{tail}")
                 if s.unavailable_to_end:
-                    out.append("unavailable: → end")
+                    out.append("unavailable: → end" + (f" (blind_spot: {s.attrs['blind_spot']})" if s.attrs.get("blind_spot") else ""))
         elif s.kind == "loop":
             bound = f" (max_iterations={s.attrs['max_iterations']})" if s.attrs.get("max_iterations") else ""
             out.append(f"while: {s.condition or ''}{bound}")
@@ -811,8 +1014,12 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
         raise ConversionError("Not a playbook definition (missing 'nodes').")
     hunt = defn.get("hunt") or {}
     meta = dict(hunt.get("meta") or {})
+    passthrough = meta.pop("x_hunt_frontmatter", None)
+    if isinstance(passthrough, dict):
+        for k, v in passthrough.items():
+            meta.setdefault(k, v)
     out: list[str] = ["---"]
-    out.append(_dump(meta, sort_keys=False, default_flow_style=False).strip())
+    out.append(_fm_dump(meta))
     out.append("---\n")
     out.append(f"# {hunt.get('name', 'Untitled hunt')}\n")
 
@@ -860,7 +1067,7 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             out.append("```")
         elif ntype == "analytic":
             out.append("```agent")
-            out.append(_dump({k: cfg[k] for k in cfg if k != "body"}, sort_keys=False).strip())
+            out.append(_dump({k: cfg[k] for k in cfg if k not in ("body", "x_hunt_attrs")}, sort_keys=False).strip())
             out.append("```")
         elif ntype == "checkpoint":
             if cfg.get("switch_cases"):
@@ -881,8 +1088,9 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
         elif ntype == "action":
             tgt = f" target={cfg['target']}" if cfg.get("target") else ""
             out.append(f"```action{tgt}")
-            if cfg.get("action_approval"):
-                out += ["~~~yaml", f"approval: {cfg['action_approval']}", "~~~"]
+            gate = {k: cfg[src] for k, src in (("approval", "action_approval"), ("track", "track")) if cfg.get(src)}
+            if gate:
+                out += ["~~~yaml", _dump(gate, sort_keys=False).strip(), "~~~"]
             out.append((cfg.get("instructions") or "").rstrip())
             out.append("```")
         else:  # task
@@ -890,6 +1098,16 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             out.append(f"```manual{tgt}")
             out.append((cfg.get("instructions") or "").rstrip())
             out.append("```")
+        # Tier-2 attributes the definition carried verbatim come back as a
+        # step-level attribute block (SPEC §4.2).
+        if ntype in ("query", "collection"):
+            pc = node.get("primitive_config") or {}
+            extra = {k: pc[k] for k in _QUERY_CONTRACT_KEYS if k in pc}
+            extra.update(pc.get("x_hunt_attrs") or {} if isinstance(pc.get("x_hunt_attrs"), dict) else {})
+        else:
+            extra = cfg.get("x_hunt_attrs")
+        if isinstance(extra, dict) and extra:
+            out += ["~~~yaml", _dump(extra, sort_keys=False, allow_unicode=True).strip(), "~~~"]
         # transitions
         kids = children.get(slug, [])
         is_switch = ntype == "checkpoint" and cfg.get("switch_cases")
@@ -912,7 +1130,7 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
 
 @dataclass
 class Issue:
-    level: str  # error | warn
+    level: str  # error | warn | info
     slug: str
     message: str
 
@@ -947,6 +1165,13 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
         issues += _check_tlp(pb, max_tlp)
     issues += _check_guardrails(pb)
     issues += _check_variables(pb)
+    issues += _check_hunt_block(pb)
+    issues += _check_telemetry(pb, profile)
+    issues += _check_scenario(pb, profile)
+    issues += _check_blind_spots(pb, profile)
+    issues += _check_query_contract(pb)
+    issues += _check_silence(pb)
+    issues += _check_narrative_and_provenance(pb)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1020,6 +1245,375 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
         from huntmd.misp import misp_issues  # noqa: PLC0415 - adapters import core, not vice versa
 
         issues.extend(Issue(lvl, slug, msg) for lvl, slug, msg in misp_issues(pb))
+    if profile == "quality":
+        issues += _quality_issues(pb)
+    return issues
+
+
+# --- quality profile (opt-in, SPEC §13) ---------------------------------------
+#
+# Rules that make a hunt more than a rule. None of them is a format error and
+# none runs under the default profiles; a generation pipeline or a curated
+# library turns them on with `--profile quality`.
+
+_QUOTED_LITERAL = re.compile(r"""(["'])(?:(?!\1).){2,}\1""")
+#: `x in ("a", "b", …)` / `x in~ (…)` / SQL `IN (…)` — the membership list itself.
+_MEMBERSHIP_LIST = re.compile(r"\b(?:in~?|IN)\s*\(([^()]*)\)", re.I)
+_AGGREGATION = re.compile(
+    r"\b(?:summarize|stats|group\s+by|count\(|dcount|distinct|make_set|min\(|max\(|first_seen|baseline|prevalence)\b", re.I
+)
+#: Imperatives that change the estate. Words that are commonly nouns in analyst
+#: prose ("the block", "a kill chain") are deliberately left out.
+_CONTAINMENT_VERB = re.compile(r"\b(?:isolate|disable|delete|quarantine|revoke|wipe|terminate|reset the|reset all)\b", re.I)
+_STALE_VERIFICATION_DAYS = 180
+_INDICATOR_LIST_MIN = 5
+
+
+def _looks_like_indicator_list(body: str) -> bool:
+    """A membership list of five or more literals, and nothing that stacks or
+    baselines — the shape of a rule that has been handed a hypothesis."""
+    if _AGGREGATION.search(body):
+        return False
+    return any(len(_QUOTED_LITERAL.findall(inner)) >= _INDICATOR_LIST_MIN for inner in _MEMBERSHIP_LIST.findall(body))
+
+
+def _quality_issues(pb: Playbook) -> list[Issue]:
+    issues: list[Issue] = []
+    queries = [s for s in pb.steps if s.kind == "query" and s.body.strip()]
+    indicator_only = [s for s in queries if _looks_like_indicator_list(s.body)]
+    for s in indicator_only:
+        issues.append(Issue("warn", s.slug, "query is a literal indicator list — parameterise the list (see typed list parameters) or add a prevalence/baseline step; indicators rot"))
+    if queries and len(indicator_only) == len(queries):
+        issues.append(Issue("warn", "", "every query is an indicator list — this is a rule with a hypothesis attached, not a hunt"))
+
+    for s in pb.steps:
+        if s.kind == "decision" and s.fuzzy:
+            targets = {e.to for e in pb.edges if e.frm == s.slug}
+            if len(targets) == 1 and not s.unavailable_to_end:
+                issues.append(Issue("warn", s.slug, f"every branch of this if~: reaches '{next(iter(targets))}' — the judgement changes nothing; drop it or route the branches differently"))
+        if s.kind == "task" and _CONTAINMENT_VERB.search(s.body):
+            verb = _CONTAINMENT_VERB.search(s.body).group(0)
+            issues.append(Issue("warn", s.slug, f"manual task says '{verb}' — a change to the estate should be a gated ```action``` step, not an instruction in prose"))
+        if s.kind == "agent":
+            ctx = s.attrs.get("context")
+            n_ctx = len(ctx) if isinstance(ctx, list) else 0
+            try:
+                bound = int(s.attrs.get("max_iterations"))
+            except (TypeError, ValueError):
+                bound = None
+            if bound is not None and n_ctx and bound < n_ctx:
+                issues.append(Issue("warn", s.slug, f"max_iterations {bound} is below the {n_ctx} context steps the agent must read — it cannot finish"))
+        if s.kind in ("query", "collection") and s.attrs.get("verified_at"):
+            try:
+                from datetime import date  # noqa: PLC0415
+
+                age = (date.today() - date.fromisoformat(str(s.attrs["verified_at"]))).days
+            except ValueError:
+                age = None
+            if age is not None and age > _STALE_VERIFICATION_DAYS:
+                issues.append(Issue("warn", s.slug, f"verified_at is {age} days old — re-run the query or the claim is folklore"))
+
+    for i, ref in enumerate(pb.meta.get("references") or []):
+        if isinstance(ref, dict) and not ref.get("url"):
+            issues.append(Issue("warn", "", f"references[{i}] '{ref.get('name', '?')}' has no url — a reviewer cannot verify the logic against it"))
+        elif not isinstance(ref, dict):
+            issues.append(Issue("warn", "", f"references[{i}] is a bare string — give it a name and a url"))
+
+    if not str(hunt_block(pb.meta).get("justification") or "").strip():
+        issues.append(Issue("warn", "", "no hunt.justification — say what the business is paying for, or a negative result is indefensible (SPEC §3.3)"))
+    return issues
+
+
+def _check_hunt_block(pb: Playbook) -> list[Issue]:
+    """The neutral ``hunt:`` block (SPEC §3.1): closed vocabularies warn, never reject."""
+    issues: list[Issue] = []
+    block = pb.meta.get("hunt")
+    if block is None:
+        return issues
+    if not isinstance(block, dict):
+        return [Issue("error", "", "hunt: must be a mapping")]
+    for key, value in block.items():
+        if key not in HUNT_BLOCK_KEYS:
+            issues.append(Issue("warn", "", f"hunt.{key} is not a defined key {list(HUNT_BLOCK_KEYS)} (kept verbatim)"))
+            continue
+        vocab = _HUNT_BLOCK_VOCAB.get(key)
+        if vocab is not None:
+            for v in [value] if isinstance(value, str) else (value if isinstance(value, list) else [value]):
+                if str(v) not in vocab:
+                    issues.append(Issue("warn", "", f"hunt.{key} '{v}' not in {list(vocab)}"))
+        elif key == "assets" and not isinstance(value, list):
+            issues.append(Issue("warn", "", "hunt.assets should be a list of the business assets or processes at stake"))
+        elif key == "review_by" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(value)):
+            issues.append(Issue("warn", "", f"hunt.review_by '{value}' is not an ISO date (YYYY-MM-DD)"))
+    return issues
+
+
+def _check_scenario(pb: Playbook, profile: str) -> list[Issue]:
+    """`scenario:` + `coverage:` (SPEC §3.4): the chain is stated, and every stage says
+    whether this hunt covers it, can't see it, or chose not to."""
+    issues: list[Issue] = []
+    scenario = pb.meta.get("scenario")
+    coverage = pb.meta.get("coverage")
+    if scenario is None and coverage is None:
+        return issues
+    if scenario is not None and not isinstance(scenario, dict):
+        return [Issue("error", "", "scenario: must be a mapping with a stages: list")]
+    if coverage is not None and not isinstance(coverage, list):
+        return [Issue("error", "", "coverage: must be a list of {stage, status, …} entries")]
+
+    stages = scenario_stages(pb.meta)
+    stage_slugs: list[str] = []
+    for i, st in enumerate(stages):
+        slug = str(st.get("slug") or "")
+        if not slug:
+            issues.append(Issue("error", "", f"scenario.stages[{i}] has no slug"))
+            continue
+        if slug in stage_slugs:
+            issues.append(Issue("error", "", f"scenario stage '{slug}' is declared twice"))
+        stage_slugs.append(slug)
+        for tech in st.get("techniques") or []:
+            if not _TECHNIQUE_ID.match(str(tech)):
+                issues.append(Issue("warn", "", f"scenario stage '{slug}': technique '{tech}' is not a Txxxx[.yyy] id"))
+    if scenario is not None and not stages:
+        issues.append(Issue("warn", "", "scenario: has no stages — nothing for coverage: to refer to"))
+    if scenario is not None and coverage is None:
+        issues.append(Issue("warn", "", "scenario: without coverage: — say which stages this hunt covers, can't see, or left out"))
+    if coverage is None:
+        return issues
+    if scenario is None:
+        issues.append(Issue("warn", "", "coverage: without scenario: — the stages it names are undefined"))
+
+    slugs = {s.slug for s in pb.steps}
+    seen_stages: list[str] = []
+    covered = 0
+    for i, entry in enumerate(coverage):
+        if not isinstance(entry, dict):
+            issues.append(Issue("error", "", f"coverage[{i}] must be a mapping"))
+            continue
+        stage = str(entry.get("stage") or "")
+        status = str(entry.get("status") or "")
+        where = f"coverage[{stage or i}]"
+        if not stage:
+            issues.append(Issue("error", "", f"{where} has no stage"))
+        elif stage_slugs and stage not in stage_slugs:
+            issues.append(Issue("error", "", f"{where}: stage '{stage}' is not in scenario.stages"))
+        seen_stages.append(stage)
+        if status not in COVERAGE_STATUS:
+            issues.append(Issue("warn", "", f"{where}: status '{status}' not in {list(COVERAGE_STATUS)}"))
+        if status == "covered":
+            covered += 1
+            steps = entry.get("steps") or []
+            if not steps:
+                issues.append(Issue("error", "", f"{where}: status covered but no steps: name which steps cover it"))
+            for step in steps if isinstance(steps, list) else [steps]:
+                if str(step) not in slugs:
+                    issues.append(Issue("error", "", f"{where}: step '{step}' does not exist"))
+        elif status in ("not_visible", "out_of_scope") and not entry.get("reason"):
+            issues.append(Issue("warn", "", f"{where}: status {status} with no reason — say why, or the gap is invisible"))
+    for slug in stage_slugs:
+        if slug not in seen_stages:
+            issues.append(Issue("error", "", f"scenario stage '{slug}' has no coverage entry — covered, not_visible, out_of_scope or existing_rule?"))
+    if profile == "quality" and stage_slugs and covered < 2:
+        issues.append(Issue("warn", "", f"only {covered} of {len(stage_slugs)} scenario stages are covered — a one-stage hunt is a rule, not a hunt"))
+    return issues
+
+
+def blind_spot_ids(meta: dict[str, Any]) -> list[str]:
+    spots = meta.get("blind_spots")
+    return [str(b.get("id")) for b in spots if isinstance(b, dict) and b.get("id")] if isinstance(spots, list) else []
+
+
+def _check_blind_spots(pb: Playbook, profile: str) -> list[Issue]:
+    """`blind_spots:` (SPEC §3.5): a dead end is a record with a cost, and every
+    reference to one resolves."""
+    issues: list[Issue] = []
+    spots = pb.meta.get("blind_spots")
+    ids: list[str] = []
+    if spots is not None:
+        if not isinstance(spots, list):
+            return [Issue("error", "", "blind_spots: must be a list of {id, requires, risk, …} entries")]
+        stage_slugs = {str(s.get("slug")) for s in scenario_stages(pb.meta)}
+        for i, b in enumerate(spots):
+            if not isinstance(b, dict):
+                issues.append(Issue("error", "", f"blind_spots[{i}] must be a mapping"))
+                continue
+            bid = str(b.get("id") or "")
+            if not bid:
+                issues.append(Issue("error", "", f"blind_spots[{i}] has no id"))
+                continue
+            if bid in ids:
+                issues.append(Issue("error", "", f"blind spot '{bid}' is declared twice"))
+            ids.append(bid)
+            for key in ("requires", "risk"):
+                if not b.get(key):
+                    issues.append(Issue("warn", "", f"blind spot '{bid}' has no {key}: — say what is missing and what it costs"))
+            if b.get("stage") and stage_slugs and str(b["stage"]) not in stage_slugs:
+                issues.append(Issue("error", "", f"blind spot '{bid}': stage '{b['stage']}' is not in scenario.stages"))
+    # References: coverage entries and unavailable: branches.
+    for entry in pb.meta.get("coverage") or []:
+        if isinstance(entry, dict) and entry.get("blind_spot") and str(entry["blind_spot"]) not in ids:
+            issues.append(Issue("error", "", f"coverage[{entry.get('stage')}]: blind_spot '{entry['blind_spot']}' is not declared in blind_spots:"))
+    for s in pb.steps:
+        ref = s.attrs.get("blind_spot")
+        if ref and str(ref) not in ids:
+            issues.append(Issue("error", s.slug, f"blind_spot '{ref}' is not declared in blind_spots:"))
+        if profile == "quality" and s.kind == "decision" and s.fuzzy and not ref:
+            routes_unavailable = s.unavailable_to_end or any(e.frm == s.slug and e.branch == "on_unavailable" for e in pb.edges)
+            if routes_unavailable:
+                issues.append(Issue("warn", s.slug, "unavailable: branch with no (blind_spot: …) — the dead end has no recorded cost"))
+    return issues
+
+
+def _check_narrative_and_provenance(pb: Playbook) -> list[Issue]:
+    """`rationale:` / `analysis:` are prose (SPEC §3.1); `provenance:` has a shape (§3.6)."""
+    issues: list[Issue] = []
+    for key in ("rationale", "analysis"):
+        if key in pb.meta and not isinstance(pb.meta[key], str):
+            issues.append(Issue("warn", "", f"{key}: should be prose (a folded scalar), not {type(pb.meta[key]).__name__}"))
+    prov = pb.meta.get("provenance")
+    if prov is None:
+        return issues
+    if not isinstance(prov, dict):
+        return [Issue("error", "", "provenance: must be a mapping {authors, source, generated}")]
+    for key in prov:
+        if key not in ("authors", "source", "generated"):
+            issues.append(Issue("warn", "", f"provenance.{key} is not a defined key [authors, source, generated] (kept verbatim)"))
+    authors = prov.get("authors")
+    if authors is not None:
+        if not isinstance(authors, list):
+            issues.append(Issue("warn", "", "provenance.authors should be a list of names or {name, org, contact}"))
+        else:
+            for a in authors:
+                if isinstance(a, dict) and not a.get("name"):
+                    issues.append(Issue("warn", "", "provenance.authors entry has no name"))
+    source = prov.get("source")
+    if source is not None:
+        if not isinstance(source, dict):
+            issues.append(Issue("warn", "", "provenance.source should be {system, ref, imported}"))
+        else:
+            if str(source.get("system", "")) not in PROVENANCE_SOURCE_SYSTEMS:
+                issues.append(Issue("warn", "", f"provenance.source.system '{source.get('system')}' not in {list(PROVENANCE_SOURCE_SYSTEMS)}"))
+            if not source.get("ref"):
+                issues.append(Issue("warn", "", "provenance.source has no ref (event uuid, playbook id or URL)"))
+            if source.get("imported") and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(source["imported"])):
+                issues.append(Issue("warn", "", f"provenance.source.imported '{source['imported']}' is not an ISO date"))
+    gen = prov.get("generated")
+    if gen is not None:
+        if not isinstance(gen, dict):
+            issues.append(Issue("warn", "", "provenance.generated should be {by, model, from, gates}"))
+        else:
+            if not gen.get("by"):
+                issues.append(Issue("warn", "", "provenance.generated has no by: — name the tool that drafted this hunt"))
+            for g in gen.get("gates") or []:
+                if str(g) not in PROVENANCE_GATES:
+                    issues.append(Issue("warn", "", f"provenance.generated.gates '{g}' not in {list(PROVENANCE_GATES)}"))
+    return issues
+
+
+def _check_query_contract(pb: Playbook) -> list[Issue]:
+    """Verification contract on query/collection steps (SPEC §5.5)."""
+    issues: list[Issue] = []
+    tlp = str(pb.meta.get("tlp") or "").lower()
+    for s in pb.steps:
+        if s.kind not in ("query", "collection"):
+            continue
+        verified = s.attrs.get("verified")
+        if verified is not None and str(verified) not in VERIFIED:
+            issues.append(Issue("warn", s.slug, f"verified '{verified}' not in {list(VERIFIED)}"))
+        if verified is not None and str(verified) == "none" and tlp in ("clear", "white"):
+            issues.append(Issue("warn", s.slug, "verified: none on a tlp: clear hunt — public content should have been run somewhere"))
+        if "reads" in s.attrs and not isinstance(s.attrs["reads"], list):
+            issues.append(Issue("warn", s.slug, "reads: should be a list of the columns/fields the query depends on"))
+        va = s.attrs.get("verified_at")
+        if va is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(va)):
+            issues.append(Issue("warn", s.slug, f"verified_at '{va}' is not an ISO date (YYYY-MM-DD)"))
+        if "verified_at" in s.attrs and "verified" not in s.attrs:
+            issues.append(Issue("warn", s.slug, "verified_at without verified: — say how it was verified (dry-run | executed)"))
+        silence = s.attrs.get("silence")
+        if silence is not None and str(silence) not in SILENCE:
+            issues.append(Issue("warn", s.slug, f"silence '{silence}' not in {list(SILENCE)}"))
+        if "expected" in s.attrs and not isinstance(s.attrs["expected"], str):
+            issues.append(Issue("warn", s.slug, "expected: should be prose describing what a hit looks like"))
+    return issues
+
+
+def _ancestors(pb: Playbook, slug: str) -> set[str]:
+    parents: dict[str, list[str]] = {}
+    for e in pb.edges:
+        parents.setdefault(e.to, []).append(e.frm)
+    seen: set[str] = set()
+    stack = list(parents.get(slug, []))
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        stack.extend(parents.get(cur, []))
+    return seen
+
+
+def _check_silence(pb: Playbook) -> list[Issue]:
+    """A decision must not close the hunt on an empty result the author said
+    proves nothing (SPEC §5.6) — the step-level form of the `unavailable: → end`
+    rule. Fires only when `silence:` was written."""
+    issues: list[Issue] = []
+    by_slug = {s.slug: s for s in pb.steps}
+    for s in pb.steps:
+        if s.kind != "decision" or s.switch_cases:
+            continue
+        closes_on_else = not any(e.frm == s.slug and e.branch == "on_refutes" for e in pb.edges)
+        if not closes_on_else:
+            continue
+        sources = [by_slug[a] for a in _ancestors(pb, s.slug) if a in by_slug and by_slug[a].kind in ("query", "collection")]
+        if not sources:
+            continue
+        declared = [q for q in sources if "silence" in q.attrs]
+        if declared and all(str(q.attrs.get("silence")) == "not_evidence_of_absence" for q in sources if "silence" in q.attrs) and len(declared) == len(sources):
+            names = ", ".join(sorted(q.slug for q in sources))
+            issues.append(
+                Issue(
+                    "warn",
+                    s.slug,
+                    f"else: → end closes the hunt on silence from {names}, which declares silence: not_evidence_of_absence — "
+                    "route the else: to a review or collection step, or examine a source whose silence is evidence",
+                )
+            )
+    return issues
+
+
+def _check_telemetry(pb: Playbook, profile: str = "huntbase") -> list[Issue]:
+    """Every data-source target a query reads should resolve to a telemetry plane (SPEC §6).
+
+    A store with no plane is an *info* under the default profiles — a 0.5 hunt
+    must lint with the same warnings it had (CHANGELOG, compatibility rule 1) —
+    and a warning under ``quality``. A legacy ``misp.telemetry`` override counts
+    as declared.
+    """
+    issues: list[Issue] = []
+    targets = pb.meta.get("targets") or {}
+    legacy = pb.meta.get("misp")
+    if isinstance(legacy, dict) and legacy.get("telemetry"):
+        return issues
+    for slug, t in targets.items():
+        if not isinstance(t, dict) or not _is_data_source(t):
+            continue
+        for plane in target_telemetry(t):
+            if plane not in TELEMETRY_PLANES:
+                issues.append(Issue("warn", "", f"target {slug}: telemetry '{plane}' not in {list(TELEMETRY_PLANES)}"))
+    unresolved = sorted(
+        {s.target for s in pb.steps if s.kind in ("query", "collection") and s.target
+         and isinstance(targets.get(s.target), dict) and _is_data_source(targets[s.target])
+         and not target_telemetry(targets[s.target])}
+    )
+    for slug in unresolved:
+        issues.append(
+            Issue(
+                "warn" if profile == "quality" else "info",
+                "",
+                f"target {slug}: category '{targets[slug].get('category')}' names a store, not a telemetry plane — "
+                f"add telemetry: [{'|'.join(TELEMETRY_PLANES)}] so data requirements are checkable",
+            )
+        )
     return issues
 
 

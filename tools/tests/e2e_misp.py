@@ -68,7 +68,8 @@ for n in ("threat-hunt-context", "threat-hunt-hypothesis", "threat-hunt-query", 
         check(f"  template uuid/version match pinned ({_TEMPLATES[n][1]})", names[n]["uuid"] == _TEMPLATES[n][0] and str(names[n]["version"]) == _TEMPLATES[n][1], f"instance has {names[n]['uuid']} v{names[n]['version']}")
 
 # --- 1. push each hunt -------------------------------------------------------------
-cases = [("kerberoasting.md", ROOT / "examples/results/kerberoasting-run.yaml"), ("scattered-spider-identity-takeover.md", None)]
+# Every hunt in hunts/; the kerberoasting run result rides along as a finding.
+cases = [(p.name, (ROOT / "examples/results/kerberoasting-run.yaml") if p.name == "kerberoasting.md" else None) for p in sorted((ROOT / "hunts").glob("*.md"))]
 for name, result_path in cases:
     print(f"\n{name}")
     md = (ROOT / "hunts" / name).read_text()
@@ -123,12 +124,42 @@ for name, result_path in cases:
         f = [o for o in fetched["Event"]["Object"] if o["name"] == "threat-hunt-finding"]
         check("finding object stored with outcome/conclusion", bool(f) and {a["object_relation"] for a in f[0]["Attribute"]} >= {"outcome", "conclusion"}, [o["name"] for o in fetched["Event"]["Object"]])
         check("finding relationship 'concludes' kept", bool(f) and any(r["relationship_type"] == "concludes" for r in f[0].get("ObjectReference", [])), f and f[0].get("ObjectReference"))
+        # 0.6: recorded outcome / handoff / period (SPEC §12.3) survive as tags + context datetimes
+        check("hunt-ex:handoff from the run result stored", 'hunt-ex:handoff="keep-as-periodic-hunt"' in got_tags, sorted(got_tags))
+        ctx_obj = next((o for o in fetched["Event"]["Object"] if o["name"] == "threat-hunt-context"), {})
+        check("period-start/period-end stored on the context object (datetime)", {a["object_relation"] for a in ctx_obj.get("Attribute", [])} >= {"period-start", "period-end"}, sorted(a["object_relation"] for a in ctx_obj.get("Attribute", [])))
+    # 0.6: the neutral hunt: block classifies without a misp: block; provenance/narrative land on the objects
+    src_pb = parse_markdown(md)
+    hb = src_pb.meta.get("hunt") or {}
+    for pred in ("trigger", "applicability", "handoff"):
+        if hb.get(pred):
+            check(f"hunt.{pred} → hunt-ex:{pred} tag stored", f'hunt-ex:{pred}="{hb[pred]}"' in got_tags, sorted(t for t in got_tags if t.startswith("hunt-ex:")))
+    hyp_obj = next((o for o in fetched["Event"]["Object"] if o["name"] == "threat-hunt-hypothesis"), {})
+    hyp_rel = {a["object_relation"]: a["value"] for a in hyp_obj.get("Attribute", [])}
+    if src_pb.meta.get("analysis"):
+        check("analysis: stored verbatim on the hypothesis object", hyp_rel.get("analysis", "").strip() == str(src_pb.meta["analysis"]).strip(), hyp_rel.get("analysis", "")[:120])
+    if src_pb.meta.get("rationale"):
+        check("rationale: stored on the hypothesis object", "rationale" in hyp_rel, sorted(hyp_rel))
+    prov = src_pb.meta.get("provenance") or {}
+    if prov.get("authors"):
+        ctx_obj = next((o for o in fetched["Event"]["Object"] if o["name"] == "threat-hunt-context"), {})
+        check("provenance.authors stored as contributor", any(a["object_relation"] == "contributor" for a in ctx_obj.get("Attribute", [])), sorted(a["object_relation"] for a in ctx_obj.get("Attribute", [])))
+    # the draft re-import writes hunt: and target telemetry (0.6), not a misp: classification
+    check("objects-only draft carries hunt: classification from the tags", bool(dpb.meta.get("hunt")) and "trigger" in dpb.meta["hunt"], dpb.meta.get("hunt"))
+    check("objects-only draft puts telemetry planes on the targets", any(t.get("telemetry") for t in dpb.meta.get("targets", {}).values()), dpb.meta.get("targets"))
+    check("objects-only draft records provenance.source = misp event uuid", (dpb.meta.get("provenance") or {}).get("source", {}).get("ref") == ev["Event"]["uuid"], dpb.meta.get("provenance"))
 
 # --- 3. the whole point: peers can filter --------------------------------------------
 print("\nsearch")
 st, found = api("POST", "/events/restSearch", {"tags": ['hunt-ex:telemetry="identity"', 'hunt-ex:query-language="kusto"'], "returnFormat": "json"})
 infos = [e["Event"]["info"] for e in found.get("response", [])]
-check('restSearch tags identity ∧ kusto finds both hunts', {"Kerberoasting hunt", "Scattered Spider identity-takeover hunt"} <= set(infos), f"http {st}: {infos}")
+check('restSearch tags identity ∧ kusto finds all three hunts', {"Kerberoasting hunt", "Scattered Spider identity-takeover hunt", "ADCS ESC1 certificate-template abuse hunt"} <= set(infos), f"http {st}: {infos}")
+st, found = api("POST", "/events/restSearch", {"tags": ['hunt-ex:trigger="sector-alert"'], "returnFormat": "json"})
+infos = [e["Event"]["info"] for e in found.get("response", [])]
+check("restSearch by hunt-ex:trigger (from the neutral hunt: block) finds the Scattered Spider hunt only", infos == ["Scattered Spider identity-takeover hunt"], infos)
+st, found = api("POST", "/events/restSearch", {"tags": ['hunt-ex:handoff="promote-to-detection"'], "returnFormat": "json"})
+infos = sorted(e["Event"]["info"] for e in found.get("response", []))
+check("restSearch by hunt-ex:handoff finds the two promote-to-detection hunts", infos == ["ADCS ESC1 certificate-template abuse hunt", "Scattered Spider identity-takeover hunt"], infos)
 st, found = api("POST", "/events/restSearch", {"tags": ['hunt-ex:outcome="inconclusive"'], "returnFormat": "json"})
 infos = [e["Event"]["info"] for e in found.get("response", [])]
 check("restSearch by outcome finds only the hunt with a finding", infos == ["Kerberoasting hunt"], infos)

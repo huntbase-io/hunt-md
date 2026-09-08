@@ -136,6 +136,173 @@ for path in hunts:
         detail = f"{key} changed: {before[key]!r} -> {after[key]!r}"[:300]
     report(f"{path.name} definition round-trip", not drift, detail)
 
+print("\npassthrough — unknown frontmatter keys and step attrs survive every exporter (SPEC §2)")
+from huntmd.core import effective_guardrails as _eg  # noqa: E402
+
+#: Frontmatter keys an exporter carries natively (and may normalise: label order,
+#: regenerated references, materialised guardrails). Everything *else* must come
+#: back byte-equal — that is the passthrough contract.
+_NATIVE_FM = {"id", "type", "name", "labels", "tlp", "severity", "hypothesis", "references", "parameters", "targets",
+              "guardrails", "created", "modified", "created_by", "x_cacao_source"}
+
+
+def _norm(v):
+    """Folded scalars re-emit with different trailing whitespace; that is not drift."""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, dict):
+        return {k: _norm(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    return v
+
+
+def passthrough_fingerprint(md: str) -> dict:
+    pb = parse_markdown(md)
+    return _norm({
+        "frontmatter": {k: v for k, v in pb.meta.items() if k not in _NATIVE_FM},
+        "targets": pb.meta.get("targets"),
+        "parameters": pb.meta.get("parameters"),
+        "guardrails": _eg(pb.meta),
+        # parallel/group are authoring sugar, not nodes (documented loss on the definition path)
+        "attrs": {s.slug: {k: v for k, v in s.attrs.items() if k != "cacao_id"} for s in pb.steps if s.kind not in ("parallel", "group")},
+    })
+
+
+def check_passthrough(name: str, md: str) -> None:
+    before = passthrough_fingerprint(md)
+    for label, fn in (
+        ("cacao", lambda m: cacao_to_markdown(markdown_to_cacao(m))),
+        ("definition", lambda m: definition_to_markdown(markdown_to_definition(m))),
+        ("markdown", lambda m: __import__("huntmd.core", fromlist=["playbook_to_markdown"]).playbook_to_markdown(parse_markdown(m))),
+    ):
+        try:
+            after = passthrough_fingerprint(fn(md))
+        except Exception as exc:  # noqa: BLE001
+            report(f"{name} passthrough via {label}", False, f"{type(exc).__name__}: {exc}")
+            continue
+        drift = [k for k in before if before[k] != after[k]]
+        detail = ""
+        if drift:
+            k = drift[0]
+            if isinstance(before[k], dict) and isinstance(after[k], dict):
+                keys = sorted({kk for kk in set(before[k]) | set(after[k]) if before[k].get(kk) != after[k].get(kk)})
+                detail = f"{k} differs at {keys[:3]}: {[(before[k].get(kk), after[k].get(kk)) for kk in keys[:1]]}"[:300]
+            else:
+                detail = f"{k}: {before[k]!r} -> {after[k]!r}"[:300]
+        report(f"{name} passthrough via {label}", not drift, detail)
+
+
+for path in hunts:
+    check_passthrough(path.name, path.read_text(encoding="utf-8"))
+
+# A hunt that uses keys no exporter knows, at every level: a frontmatter block
+# from a future spec revision, a private extension on a target, Tier-2 attrs on
+# a query, a decision, a task and an action, and an agent step with in/out.
+_unknown = """---
+type: investigation
+name: passthrough fixture
+labels: [hunt, attack.t1000]
+tlp: green
+severity: low
+hypothesis: x
+future_block:
+  nested: {a: 1, b: [x, y]}
+  text: keep me
+private_ext: verbatim
+parameters:
+  lookback: {type: duration, default: "7d"}
+targets:
+  siem: {category: siem, name: SIEM, vendor_ext: {product: p}, telemetry: [identity]}
+  hunter: {agent: true, name: Hunt agent}
+  tier2: {role: analyst, name: Analyst}
+---
+
+# passthrough fixture
+
+## q
+```kql target=siem params=(days=lookback) out=$rows
+~~~yaml
+notes: collected via raw accessor
+reads: [a, b]
+~~~
+x {{days}}
+```
+
+## d
+~~~yaml
+owner: pki
+~~~
+if: `q.rows > 0`
+then: → a
+else: → t
+
+## a
+```agent target=hunter in=[$rows] out=$verdict
+~~~yaml
+budget: 200
+~~~
+objective: o
+tools: [siem]
+max_iterations: 2
+context: [q]
+```
+
+## t
+```manual target=tier2
+~~~yaml
+sla: 4h
+~~~
+review
+```
+→ end
+
+## act
+```action target=siem
+~~~yaml
+approval: required
+track: containment
+severity_note: high
+~~~
+contain
+```
+→ end
+"""
+check_passthrough("unknown-keys fixture", _unknown)
+report(
+    "unknown frontmatter reaches the definition verbatim",
+    markdown_to_definition(_unknown)["hunt"]["meta"]["x_hunt_frontmatter"]["future_block"]["nested"]["b"] == ["x", "y"],
+)
+report(
+    "unknown step attrs reach the definition verbatim",
+    next(n for n in markdown_to_definition(_unknown)["nodes"] if n["id"] == "q")["primitive_config"]["x_hunt_attrs"]["notes"] == "collected via raw accessor",
+)
+report(
+    "unknown frontmatter reaches the CACAO export verbatim",
+    markdown_to_cacao(_unknown)["x_hunt"]["frontmatter"]["private_ext"] == "verbatim",
+)
+
+print("\nbackward compatibility — frozen 0.5 hunts lint with the same errors and warnings (CHANGELOG rule 1)")
+# These are the repo hunts exactly as they were at 0.5. New tooling may add
+# info-level notes; it must not add or remove an error or a warning.
+_EXPECTED_05 = {
+    ("kerberoasting-0.5.md", "format"): [],
+    ("kerberoasting-0.5.md", "huntbase"): ["route-by-verdict: switch: compiles to chained binary checkpoints on Huntbase"],
+    ("scattered-spider-identity-takeover-0.5.md", "format"): [],
+    ("scattered-spider-identity-takeover-0.5.md", "huntbase"): [],
+}
+for (fname, prof), expected in _EXPECTED_05.items():
+    fx = ROOT / "tools" / "tests" / "fixtures" / fname
+    got = [f"{i.slug}: {i.message}" for i in validate_markdown(fx.read_text(encoding="utf-8"), profile=prof) if i.level in ("error", "warn")]
+    report(f"{fname} [{prof}] unchanged errors/warnings", got == expected, f"{got}")
+    # …and still converts + round-trips
+    try:
+        _rt = parse_markdown(cacao_to_markdown(markdown_to_cacao(fx.read_text(encoding="utf-8"))))
+        ok = bool(_rt.steps)
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+    report(f"{fname} still converts", ok)
+
 print("\nsession-derived export — UUID ids must render as readable slugs")
 # A Huntbase session-derived definition carries DB UUIDs as node ids (not
 # authored slugs). The export must key headings + transitions off the label so
@@ -230,6 +397,14 @@ bad_key = validate_markdown(base.format(extra="guardrails: { telemetryy: trusted
 report("unknown guardrail key is an error", any(i.level == "error" and "unknown guardrail" in i.message for i in bad_key))
 bad_val = validate_markdown(base.format(extra="guardrails: { telemetry: whatever }\n"), profile="format")
 report("invalid guardrail value is an error", any(i.level == "error" and "not in" in i.message for i in bad_val))
+# SPEC §8.1 shows the per-step override as a *trailing* ~~~yaml block inside the agent fence.
+_trailing = base.format(extra="").replace("max_iterations: 2\n", "max_iterations: 2\n~~~yaml\nguardrails: { evidence: citation_required }\n~~~\n")
+_tstep = parse_markdown(_trailing).steps[0]
+report(
+    "trailing ~~~yaml inside an agent fence parses (SPEC §8.1 form)",
+    _tstep.attrs.get("guardrails") == {"evidence": "citation_required"} and _tstep.attrs.get("max_iterations") == 2,
+    f"attrs={_tstep.attrs}",
+)
 report(
     "guardrails reach the runtime definition",
     markdown_to_definition(base.format(extra=""))["hunt"]["meta"].get("guardrails", {}).get("telemetry") == "untrusted",
@@ -349,6 +524,21 @@ report("malicious → hypothesis-confirmed-malicious", 'hunt-ex:outcome="hypothe
 _badmisp = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nmisp: {trigger: vibes, telemetry: [identity]}\n---\n# t\n## q\n```kql target=s\nx\n```\n→ end\n"
 report("misp: block off-vocabulary value warns under --profile misp", any("vibes" in str(i) for i in validate_markdown(_badmisp, profile="misp")))
 report("--profile format ignores the misp: block", not any("vibes" in str(i) for i in validate_markdown(_badmisp, profile="format")))
+report("legacy misp: classification keys get an info-level 'moved' notice", any(i.level == "info" and "moved to hunt.trigger" in i.message for i in validate_markdown(_badmisp, profile="misp")))
+
+print("\nhunt: block + telemetry planes (SPEC §3.1, §6)")
+_hb = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nhunt: {{trigger: {trig}, handoff: promote-to-detection, justification: 'PCI scope', assets: [cardholder-db], review_by: {rb}}}\ntargets:\n  siem: {{category: siem, name: SIEM{tele}}}\n---\n# t\n## q\n```kql target=siem\nx\n```\n→ end\n"
+_good_hb = _hb.format(trig="crown-jewel", rb="2027-01-01", tele=", telemetry: [identity]")
+report("well-formed hunt: block + declared telemetry lints clean", not [i for i in validate_markdown(_good_hb, profile="format") if i.level != "info"], str(validate_markdown(_good_hb, profile="format")))
+report("hunt.trigger off-vocabulary warns (never rejects)", any(i.level == "warn" and "hunt.trigger" in i.message for i in validate_markdown(_hb.format(trig="vibes", rb="2027-01-01", tele=", telemetry: [identity]"), profile="format")))
+report("hunt.review_by must be an ISO date", any("review_by" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="soon", tele=", telemetry: [identity]"), profile="format")))
+report("a siem target with no telemetry plane is an info under the default profile", any(i.level == "info" and "names a store" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=""), profile="format")))
+report("…and a warning under --profile quality", any(i.level == "warn" and "names a store" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=""), profile="quality")))
+report("an off-vocabulary plane warns", any("telemetry 'mainframe'" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=", telemetry: [mainframe]"), profile="format")))
+report("hunt: classification drives the hunt-ex tags", {'hunt-ex:trigger="crown-jewel"', 'hunt-ex:handoff="promote-to-detection"', 'hunt-ex:telemetry="identity"'} <= {t["name"] for t in markdown_to_misp(_good_hb)["Event"]["Tag"]})
+report("hunt: block reaches the definition first-class", markdown_to_definition(_good_hb)["hunt"]["meta"]["hunt"]["trigger"] == "crown-jewel")
+from huntmd.core import LANGUAGES, LANGUAGE_TO_HUNT_EX, HUNT_EX_VOCAB  # noqa: E402
+report("every language maps to a HUNT-EX query-language value", all(hx in HUNT_EX_VOCAB["query-language"] for _, hx, _ in LANGUAGES) and LANGUAGE_TO_HUNT_EX["kql"] == "kusto")
 # A hand-authored MISP event (no hunt.md provenance at all) imports as a draft.
 _foreign = {
     "Event": {
@@ -370,14 +560,15 @@ _fmd = misp_to_markdown(_foreign)
 _fpb = parse_markdown(_fmd)
 _ferr = [str(i) for i in validate_markdown(_fmd, profile="format") if i.level == "error"]
 report(
-    "foreign MISP event → draft: kql + sigma queries, ATT&CK label, tlp, finding as review task, misp: provenance",
+    "foreign MISP event → draft: kql + sigma queries, ATT&CK label, tlp, finding as review task, hunt: + telemetry on targets",
     not _ferr
     and sorted(s.lang for s in _fpb.steps if s.kind == "query") == ["kql", "sigma"]
     and "attack.t1528" in _fpb.meta["labels"]
     and _fpb.meta["tlp"] == "amber"
     and any(s.kind == "task" for s in _fpb.steps)
-    and _fpb.meta["misp"]["telemetry"] == "saas"
-    and _fpb.meta["misp"]["trigger"] == "sector-alert",
+    and all(t.get("telemetry") == "saas" for t in _fpb.meta["targets"].values() if t.get("category"))
+    and _fpb.meta["hunt"]["trigger"] == "sector-alert"
+    and _fpb.meta["provenance"]["source"] == {"system": "misp", "ref": "11111111-2222-3333-4444-555555555555"},
     "; ".join(_ferr[:2]) or _fmd[:300],
 )
 for fx in sorted((ROOT / "examples" / "misp-export").glob("*.json")):
@@ -386,6 +577,214 @@ for fx in sorted((ROOT / "examples" / "misp-export").glob("*.json")):
     ferr = [str(i) for i in validate_markdown(fmd, profile="format") if i.level == "error"]
     report(f"examples/misp-export/{fx.name} imports + lints", is_misp_event(fev) and not ferr, "; ".join(ferr[:2]))
 report("attachment round-trip decodes utf-8", base64.b64decode(next(a["data"] for a in _ev["Attribute"] if a["type"] == "attachment")).decode() == _kb)
+
+print("\nrationale, analysis, provenance (SPEC §3.1, §3.6)")
+_pv = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+rationale: why this hypothesis
+analysis: pivot from A to B, baseline C
+provenance:
+  authors: [{{name: Hunt team, org: Example}}, Solo Analyst]
+  source: {{system: {system}, ref: abc, imported: 2026-09-01}}
+  generated: {{by: pipeline, model: m, from: "https://x", gates: [{gate}]}}
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem
+x
+```
+→ end
+"""
+_pv_ok = _pv.format(system="misp", gate="dry-run")
+report("well-formed provenance lints clean", not [i for i in validate_markdown(_pv_ok, profile="format") if i.level != "info"], str(validate_markdown(_pv_ok, profile="format")))
+report("provenance.source.system off-vocabulary warns", any("source.system" in i.message for i in validate_markdown(_pv.format(system="carrier-pigeon", gate="lint"), profile="format")))
+report("generated.gates off-vocabulary warns", any("gates 'vibes'" in i.message for i in validate_markdown(_pv.format(system="url", gate="vibes"), profile="format")))
+_pv_ev = markdown_to_misp(_pv_ok)["Event"]
+_pv_ctx = next(o for o in _pv_ev["Object"] if o["name"] == "threat-hunt-context")
+_pv_hyp = next(o for o in _pv_ev["Object"] if o["name"] == "threat-hunt-hypothesis")
+report("provenance.authors export as MISP contributors", sorted(a["value"] for a in _pv_ctx["Attribute"] if a["object_relation"] == "contributor") == ["Hunt team / Example", "Solo Analyst"])
+report("rationale + analysis export on the hypothesis object (not a synthesised summary)", {a["object_relation"]: a["value"] for a in _pv_hyp["Attribute"]}.get("analysis") == "pivot from A to B, baseline C" and {a["object_relation"]: a["value"] for a in _pv_hyp["Attribute"]}.get("rationale") == "why this hypothesis")
+_pv_rt = parse_markdown(cacao_to_markdown(markdown_to_cacao(_pv_ok)))
+report("rationale/analysis/provenance survive md → CACAO → md", _pv_rt.meta.get("provenance") == parse_markdown(_pv_ok).meta["provenance"] and _pv_rt.meta.get("rationale") == "why this hypothesis")
+report("provenance.authors seeds the CACAO created_by identity", markdown_to_cacao(_pv_ok)["created_by"] != markdown_to_cacao(_pv_ok.replace("Hunt team", "Other team"))["created_by"])
+
+print("\nscenario + coverage (SPEC §3.4)")
+_sc = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+scenario:
+  stages:
+    - {{slug: s1, techniques: [T1136.002]}}
+    - {{slug: s2, techniques: [{tech}]}}
+coverage:
+  - {{stage: s1, status: covered, steps: [{step}]}}
+{s2cov}---
+# t
+## q
+```kql target=siem
+x
+```
+→ end
+"""
+_sc_ok = _sc.format(tech="T1649", step="q", s2cov="  - {stage: s2, status: not_visible, reason: no sign-in logs}\n")
+report("well-formed scenario + coverage lints clean", not [i for i in validate_markdown(_sc_ok, profile="format") if i.level == "error"], str(validate_markdown(_sc_ok, profile="format")))
+report("a stage with no coverage entry is an error", any("has no coverage entry" in i.message for i in validate_markdown(_sc.format(tech="T1649", step="q", s2cov=""), profile="format")))
+report("covered must name a real step", any("does not exist" in i.message for i in validate_markdown(_sc.format(tech="T1649", step="nope", s2cov="  - {stage: s2, status: covered, steps: [q]}\n"), profile="format")))
+report("not_visible without a reason warns", any("no reason" in i.message for i in validate_markdown(_sc.format(tech="T1649", step="q", s2cov="  - {stage: s2, status: not_visible}\n"), profile="format")))
+report("a malformed technique id warns", any("not a Txxxx" in i.message for i in validate_markdown(_sc.format(tech="privesc", step="q", s2cov="  - {stage: s2, status: out_of_scope, reason: r}\n"), profile="format")))
+report("an unknown coverage stage is an error", any("not in scenario.stages" in i.message for i in validate_markdown(_sc_ok.replace("stage: s1", "stage: s9"), profile="format")))
+report("scenario/coverage reach the definition first-class", markdown_to_definition(_sc_ok)["hunt"]["meta"]["coverage"][0]["status"] == "covered")
+
+print("\nblind spots (SPEC §3.5, §7.2)")
+_bs = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+blind_spots:
+  - {{id: no-dns, requires: dns logs, risk: tunnelling stays invisible}}
+---
+# t
+## judge
+if~: "looks bad" (confidence: high, judge=a)
+then: → act
+indeterminate: → review
+unavailable: → review (blind_spot: {ref})
+else: → close
+## act
+```manual target=a
+x
+```
+→ end
+## review
+```manual target=a
+x
+```
+→ end
+## close
+```manual target=a
+x
+```
+→ end
+"""
+_bs_ok = _bs.format(ref="no-dns")
+_bs_pb = parse_markdown(_bs_ok)
+report("unavailable: (blind_spot: id) parses to the step attr + edge", _bs_pb.steps[0].attrs.get("blind_spot") == "no-dns" and any(e.branch == "on_unavailable" and e.to == "review" for e in _bs_pb.edges))
+report("well-formed blind_spots lints clean", not [i for i in validate_markdown(_bs_ok, profile="format") if i.level == "error"], str(validate_markdown(_bs_ok, profile="format")))
+report("an undeclared blind_spot reference is an error", any("not declared" in i.message for i in validate_markdown(_bs.format(ref="nope"), profile="format")))
+report("a blind spot with no risk warns", any("no risk" in i.message for i in validate_markdown(_bs_ok.replace(", risk: tunnelling stays invisible", ""), profile="format")))
+report("unavailable: without a blind spot warns under --profile quality", any("no recorded cost" in i.message for i in validate_markdown(_bs_ok.replace(" (blind_spot: no-dns)", ""), profile="quality")))
+report("…and not under --profile format", not any("no recorded cost" in i.message for i in validate_markdown(_bs_ok.replace(" (blind_spot: no-dns)", ""), profile="format")))
+from huntmd.core import playbook_to_markdown as _p2m  # noqa: E402
+report("blind_spot annotation survives md → md", "(blind_spot: no-dns)" in _p2m(_bs_pb))
+report("blind_spot annotation survives md → CACAO → md", parse_markdown(cacao_to_markdown(markdown_to_cacao(_bs_ok))).steps[0].attrs.get("blind_spot") == "no-dns")
+report("blind_spot annotation survives md → definition → md", next(s for s in parse_markdown(definition_to_markdown(markdown_to_definition(_bs_ok))).steps if s.slug == "judge").attrs.get("blind_spot") == "no-dns")
+
+print("\nquery verification contract + silence (SPEC §5.5, §5.6)")
+_qc = """---
+hypothesis: x
+tlp: {tlp}
+labels: [attack.t1000]
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+  tier2: {{role: analyst, name: Analyst}}
+---
+# t
+## q
+```kql target=siem
+~~~yaml
+source: SecurityEvent
+reads: [EventID, Account]
+verified: {verified}
+verified_at: 2026-09-07
+expected: rows with EventID 4769
+silence: {silence}
+~~~
+x
+```
+## d
+if: `q.rows > 0`
+then: → review
+else: → {els}
+## review
+```manual target=tier2
+x
+```
+→ end
+"""
+_qc_ok = _qc.format(tlp="green", verified="dry-run", silence="not_evidence_of_absence", els="review")
+report("well-formed contract lints clean", not [i for i in validate_markdown(_qc_ok, profile="format") if i.level != "info"], str(validate_markdown(_qc_ok, profile="format")))
+report("verified off-vocabulary warns", any("verified 'maybe'" in i.message for i in validate_markdown(_qc_ok.replace("verified: dry-run", "verified: maybe"), profile="format")))
+report("verified: none on a tlp: clear hunt warns", any("public content" in i.message for i in validate_markdown(_qc.format(tlp="clear", verified="none", silence="not_evidence_of_absence", els="review"), profile="format")))
+report("silence off-vocabulary warns", any("silence 'maybe'" in i.message for i in validate_markdown(_qc_ok.replace("silence: not_evidence_of_absence", "silence: maybe"), profile="format")))
+report("else: → end on a not_evidence_of_absence source warns", any("closes the hunt on silence" in i.message for i in validate_markdown(_qc.format(tlp="green", verified="dry-run", silence="not_evidence_of_absence", els="end"), profile="format")))
+report("…but not when the source's silence is evidence", not any("closes the hunt on silence" in i.message for i in validate_markdown(_qc.format(tlp="green", verified="dry-run", silence="evidence_of_absence", els="end"), profile="format")))
+_nosil = _qc.format(tlp="green", verified="dry-run", silence="x", els="end").replace("silence: x\n", "")
+report("…and not when silence: was never written (0.5 hunts lint as before)", not any("closes the hunt on silence" in i.message for i in validate_markdown(_nosil, profile="format")))
+_pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")["primitive_config"]
+report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
+report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
+
+print("\nquality profile (opt-in, SPEC §13)")
+_ql = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+hunt: {{justification: because}}
+references: [{{name: blog{url}}}]
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+  hunter: {{agent: true, name: Hunt agent}}
+  tier2: {{role: analyst, name: Analyst}}
+---
+# t
+## q
+```kql target=siem
+{query}
+```
+## a
+```agent target=hunter
+objective: o
+tools: [siem]
+max_iterations: {iters}
+context: [q, q, q]
+```
+## j
+if~: "bad" (confidence: high, judge=hunter)
+then: → {then_}
+indeterminate: → review
+else: → review
+## review
+```manual target=tier2
+{task}
+```
+→ end
+## act
+```manual target=tier2
+look
+```
+→ end
+"""
+_ioc = 'SecurityEvent | where Computer in ("a-host", "b-host", "c-host", "d-host", "e-host")'
+_stack = "SecurityEvent | summarize c=count() by Computer"
+_ql_ok = _ql.format(url=", url: https://x", query=_stack, iters=6, then_="act", task="review it")
+report("a well-formed hunt is quiet under --profile quality", not [i for i in validate_markdown(_ql_ok, profile="quality") if i.level == "warn"], str(validate_markdown(_ql_ok, profile="quality")))
+_q_ioc = validate_markdown(_ql.format(url=", url: https://x", query=_ioc, iters=6, then_="act", task="review it"), profile="quality")
+report("an indicator-list query warns, and 'every query' warns when that is all there is", any("indicator list" in i.message and i.slug == "q" for i in _q_ioc) and any("every query is an indicator list" in i.message for i in _q_ioc))
+report("…and the default profile says nothing", not any("indicator" in i.message for i in validate_markdown(_ql.format(url=", url: https://x", query=_ioc, iters=6, then_="act", task="review it"), profile="format")))
+report("a fuzzy decision whose branches converge warns", any("changes nothing" in i.message for i in validate_markdown(_ql.format(url=", url: https://x", query=_stack, iters=6, then_="review", task="review it"), profile="quality")))
+report("a manual task with a containment verb warns", any("gated" in i.message and "isolate" in i.message for i in validate_markdown(_ql.format(url=", url: https://x", query=_stack, iters=6, then_="act", task="isolate the host"), profile="quality")))
+report("max_iterations below the context count warns", any("cannot finish" in i.message for i in validate_markdown(_ql.format(url=", url: https://x", query=_stack, iters=2, then_="act", task="review it"), profile="quality")))
+report("a reference without a url warns", any("has no url" in i.message for i in validate_markdown(_ql.format(url="", query=_stack, iters=6, then_="act", task="review it"), profile="quality")))
+report("a missing hunt.justification warns", any("no hunt.justification" in i.message for i in validate_markdown(_ql_ok.replace("hunt: {justification: because}\n", ""), profile="quality")))
+report("stale verified_at warns", any("days old" in i.message for i in validate_markdown(_ql_ok.replace("```kql target=siem\n", "```kql target=siem\n~~~yaml\nverified: executed\nverified_at: 2020-01-01\n~~~\n"), profile="quality")))
+for path in hunts:
+    _qi = [str(i) for i in validate_markdown(path.read_text(encoding="utf-8"), profile="quality") if i.level == "warn"]
+    report(f"{path.name} passes --profile quality", not _qi, "; ".join(_qi[:2]))
 
 print("\nrun results (SPEC §12)")
 from huntmd.results import validate_result  # noqa: E402
@@ -425,6 +824,27 @@ report(
     "bad vocabulary is rejected",
     any("not in" in i.message for i in validate_result({"hunt_result": {"hunt": "k", "disposition": "probably-fine"}})),
 )
+# §12.3 outcome / byproducts / handoff / period
+_r123 = copy.deepcopy(good)
+_r123["hunt_result"].update({"outcome": "hypothesis-confirmed-benign", "byproducts": ["detection-gap"], "handoff": "retire", "period": {"start": "2026-07-01T00:00:00Z", "end": "2026-07-14T00:00:00Z"}})
+report("§12.3 fields lint clean when well-formed", not [i for i in validate_result(_r123) if i.level == "error"], str(validate_result(_r123)))
+_bad_o = copy.deepcopy(_r123); _bad_o["hunt_result"]["outcome"] = "meh"
+report("outcome off-vocabulary is an error", any("outcome 'meh'" in i.message for i in validate_result(_bad_o)))
+_cb = copy.deepcopy(_r123); _cb["hunt_result"]["evidence_summary"] = {"benign_supporting": []}; _cb["hunt_result"]["disposition"] = "inconclusive"
+report("confirmed-benign outcome needs benign evidence", any("confirmed-benign hypothesis needs" in i.message for i in validate_result(_cb)))
+_mal = copy.deepcopy(_r123); _mal["hunt_result"].update({"disposition": "malicious", "outcome": "hypothesis-not-confirmed"})
+report("malicious + not-confirmed is contradictory", any("contradict" in i.message or "malicious finding confirms" in i.message for i in validate_result(_mal)))
+_per = copy.deepcopy(_r123); _per["hunt_result"]["period"] = {"start": "2026-07-14T00:00:00Z", "end": "2026-07-01T00:00:00Z"}
+report("period start after end is an error", any("after period.end" in i.message for i in validate_result(_per)))
+_gap = copy.deepcopy(_r123); _gap["hunt_result"]["telemetry_coverage"] = {"missing": [{"target": "edr", "impact": "x", "blind_spot": "no-edr"}]}
+report("missing telemetry without data-source-gap byproduct warns", any("data-source-gap" in i.message for i in validate_result(_gap)))
+_ev123 = markdown_to_misp(_kb, result=_r123)["Event"]
+_t123 = {t["name"] for t in _ev123["Tag"]}
+report("recorded outcome/byproducts/handoff drive the finding tags (no heuristic)", {'hunt-ex:outcome="hypothesis-confirmed-benign"', 'hunt-ex:byproduct="detection-gap"', 'hunt-ex:handoff="retire"'} <= _t123, str(sorted(_t123)))
+_ctx123 = next(o for o in _ev123["Object"] if o["name"] == "threat-hunt-context")
+report("period lands on the context object", any(a["object_relation"] == "period-start" and a["value"].startswith("2026-07-01") for a in _ctx123["Attribute"]))
+_run_issues = validate_result(_run)
+report("examples/results/kerberoasting-run.yaml lints clean with §12.3 fields", not [i for i in _run_issues if i.level == "error"], str(_run_issues))
 
 print("\nparser robustness + lint completeness")
 _BT, _BT4 = "`" * 3, "`" * 4

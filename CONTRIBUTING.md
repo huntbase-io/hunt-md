@@ -19,6 +19,7 @@ against the format spec and a lint pass.
    ```bash
    pip install ./tools
    huntmd validate hunts/my-hunt.md --profile format --max-tlp green
+   huntmd validate hunts/my-hunt.md --profile quality   # hunts in this repo must pass it
    python tools/tests/check.py
    ```
 
@@ -41,7 +42,15 @@ against the format spec and a lint pass.
 - **Confidence is ordinal** — `(confidence: high)`, not `>= 0.8`. A model's
   numeric confidence isn't calibrated between runs.
 - **"We couldn't look" never closes a hunt** — route `unavailable:` to a human or
-  a collection step, never to `end`.
+  a collection step, never to `end` — and name what the dead end costs:
+  `unavailable: → escalate (blind_spot: <id>)` with a `blind_spots:` entry
+  (SPEC §3.5).
+- **Say what the hunt can see** — when the hunt comes from an intrusion report,
+  `scenario:` + `coverage:` say per stage whether it is covered, not visible,
+  or out of scope (SPEC §3.4).
+- **Say what a query reads and what silence proves** — `reads:`, `verified:`,
+  `expected:` and `silence:` on query steps (SPEC §5.5–§5.6); a hunt must not
+  close on an empty result its own author marked as proving nothing.
 - **Destructive actions are gated** — any `action` that changes state
   (disable/isolate/block/…) sits behind `approval: required` or a preceding
   decision.
@@ -50,11 +59,15 @@ against the format spec and a lint pass.
 - **Portability** — prefer abstract `targets` (`category:`); add per-runtime
   `bindings` (e.g. `huntbase: { product: … }`) rather than hard-coding a product
   as the only option.
-- **Shareable via MISP** (optional, `--profile misp`) — a `category:` that maps to
-  a HUNT-EX telemetry plane (or a `misp: { telemetry: [...] }` override) and an
-  ATT&CK label, so peers filtering their MISP instance can find the hunt. Extra
-  HUNT-EX classification (`trigger`, `applicability`, `handoff`) goes in the
-  namespaced `misp:` block — see PROFILES.md §3.
+- **Targets resolve to a telemetry plane** — a plane category (`endpoint`,
+  `iam`, …) derives it; a store (`siem`, `datalake`) states
+  `telemetry: [identity, …]` (SPEC §6). A query target with no plane warns.
+- **Say why the hunt exists** — the `hunt:` block (SPEC §3.3): `trigger`,
+  `handoff`, and a prose `justification`. Off-vocabulary values warn; a
+  missing justification is a `--profile quality` warning.
+- **Shareable via MISP** (optional, `--profile misp`) — with the two rules above
+  met and an ATT&CK label, peers filtering their MISP instance can find the
+  hunt; nothing MISP-specific is needed. See PROFILES.md §3.
 
 ## What belongs in this repository
 

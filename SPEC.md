@@ -1,6 +1,6 @@
 # hunt.md — specification
 
-**Version:** 0.5 (draft) · **Status:** Working proposal
+**Version:** 0.6 (draft) · **Status:** Working proposal · **Changes:** see `CHANGELOG.md`
 **License of this document:** see `LICENSE`
 
 `hunt.md` is an **open, portable, human-first Markdown format for threat-hunting
@@ -74,6 +74,15 @@ severity: high                      # critical | high | medium | low  (or 0–10
 tlp: amber
 hypothesis: >
   Service accounts are being kerberoasted from non-admin workstations.
+rationale: >                        # why this hypothesis, why this scope (optional)
+  Sector reporting shows RC4 roasting preceding ransomware; our SPN estate is unaudited.
+analysis: >                         # the analytic approach: pivots, baselines, what falsifies it
+  Stack 4769/0x17 by account and source; a burst from many workstations refutes "backup job".
+hunt:                               # why the hunt exists, what happens after (§3.3)
+  trigger: intel-report
+  handoff: keep-as-periodic-hunt
+  justification: >
+    A cracked SPN password is reusable until rotated and invisible to MFA.
 references:
   - name: CISA AA23-320A
     url: https://www.cisa.gov/...
@@ -81,18 +90,175 @@ parameters:                         # launch-time inputs; portable {{name}} plac
   lookback:  { type: duration, default: "14d" }
   suspects:  { type: string }       # no default → collected at launch or bound at runtime
 targets:                            # abstract data sources / agents / people (§6)
-  siem:   { category: siem,      name: SIEM }
+  siem:   { category: siem,      name: SIEM, telemetry: [identity] }
   edr:    { category: endpoint,  name: EDR }
   hunter: { agent: true,         name: Hunt agent }     # generic agent — runtime binds it
   tier2:  { role: analyst,       name: Tier-2 analyst }
+provenance:                         # who, and where from (§3.6)
+  authors: [{ name: Hunt team, org: Example ISAC }]
 ---
 ```
 
-Unknown frontmatter keys pass through (Tier 2). `parameters`, `targets`,
-`labels`, `severity`, `hypothesis` have defined meaning (§11). A profile MAY
-define a namespaced block for facts only it needs (e.g. `misp:` for HUNT-EX
-sharing classification, `huntbase:` bindings on targets); such blocks are
-documented in PROFILES.md, never here, and every other profile ignores them.
+`rationale` and `analysis` are prose beside the hypothesis: *why this
+hypothesis and scope* and *how it is tested* — the pivots, the baselines, what
+would falsify it. Reviewers want them in a PR; sharing profiles carry them on
+the hypothesis object instead of synthesising a summary from the steps.
+
+Unknown frontmatter keys pass through (Tier 2) — the parser keeps them and
+every exporter carries them verbatim (`x_hunt_frontmatter` in a definition,
+`x-hunt.frontmatter` in CACAO). `parameters`, `targets`, `labels`, `severity`,
+`hypothesis`, `hunt` have defined meaning (§11). A profile MAY define a
+namespaced block for facts only it needs (e.g. `huntbase:` bindings on targets,
+`misp:` for MISP-only knobs); such blocks are documented in PROFILES.md, never
+here, and every other profile ignores them.
+
+### 3.3 The `hunt:` block — why this hunt exists
+
+A hunt is a hypothesis plus a programme decision: someone chose to spend
+analyst time on it, and something happens when it ends. That decision is a fact
+about the hunt, not about any sharing platform, so it has a neutral home. All
+keys are optional; the vocabularies are the HUNT-EX ones (they are the PEAK /
+TaHiTI vocabulary), so a hunt classifies for sharing without a profile-specific
+block.
+
+```yaml
+hunt:
+  trigger: crown-jewel          # intel-report | sector-alert | prior-hunt | incident-followup | red-team |
+                                # purple-team | crown-jewel | detection-gap | analyst-intuition | ioc-sweep
+  methodology: structured-hypothesis-driven   # | unstructured-baseline | model-assisted  (default: the first)
+  applicability: universal      # universal | sector-specific | environment-specific | campaign-specific
+  handoff: promote-to-detection # promote-to-detection | keep-as-periodic-hunt | retire | escalated-to-ir |
+                                # handed-to-detection-engineering
+  justification: >              # prose: the obligation, exposure or asset that pays for this hunt
+    Cardholder-data systems are in PCI scope; certificate-based escalation
+    bypasses every password control we report on.
+  assets: [cardholder-db, issuing CAs]   # business assets or processes at stake
+  review_by: 2027-03-01         # justifications go stale; when to re-examine this one
+```
+
+`trigger` is the structured half of the business justification — the *kind* of
+reason the hunt exists. `justification` is the prose half: what makes a negative
+result defensible rather than wasted spend. A library index filters on the
+first; a report quotes the second. Linters warn on an off-vocabulary value and
+never reject; a missing `justification` is a `quality`-profile warning (§13).
+
+### 3.4 Scenario and coverage — which stages this hunt can see
+
+A hunt written from an intrusion report covers some stages of that intrusion
+and not others, and a reader cannot tell from the steps alone whether a missing
+stage was judged out of scope, could not be observed, or was forgotten. The
+`scenario:` block states the chain; `coverage:` says, per stage, what this hunt
+does about it. Both are optional; together they render as a table.
+
+```yaml
+scenario:
+  summary: MAQ abuse → ESC1 enrolment → PKINIT as a tier-0 identity → lateral movement
+  stages:
+    - slug: machine-account-creation
+      name: Attacker creates a computer account under the default quota
+      tactic: persistence                 # ATT&CK tactic short name; shape-checked only
+      techniques: [T1136.002]
+      observables: ["4741 from a non-delegated creator"]
+    - slug: esc1-enrolment
+      techniques: [T1649]
+    - slug: lateral-movement
+      techniques: [T1021]
+coverage:
+  - stage: machine-account-creation
+    status: covered              # covered | not_visible | out_of_scope | existing_rule
+    steps: [query-machine-account-creation]
+  - stage: esc1-enrolment
+    status: covered
+    steps: [collect-ca-database, analyze-ca-requests]
+  - stage: lateral-movement
+    status: not_visible
+    reason: "No lateral-movement telemetry in scope; needs 4624/4648 with logon type."
+    blind_spot: no-lateral-telemetry     # optional link to a §3.5 record
+```
+
+| status | meaning |
+|---|---|
+| `covered` | one or more named steps examine this stage; `steps:` is required and must resolve |
+| `not_visible` | the hunt cannot examine it — a telemetry or process gap; `reason:` expected, and a `blind_spot:` link is how it becomes a request (§3.5) |
+| `out_of_scope` | deliberately left to another hunt or control; `reason:` expected (link the other hunt in `related:` when it exists) |
+| `existing_rule` | a detection already covers it; the hunt does not repeat it |
+
+Lint: when either block is present, every stage slug appears in `coverage`
+(error); `covered` names real step slugs (error); `not_visible` /
+`out_of_scope` without a `reason` warns; an off-vocabulary status warns. The
+`quality` profile (§13) warns when fewer than two stages are covered — a
+one-stage hunt is a rule.
+
+### 3.5 Blind spots — what a dead end costs
+
+Hunts routinely stop not because the hypothesis was refuted but because the
+data or the process needed to answer it does not exist: a source is not
+onboarded, retention expired, a field is unparsed, nobody owns the template. The
+format already keeps that state distinct (`unavailable:`, §7.2) and forbids
+closing on it (§8.1). What it did not record is *what the gap costs*, which is
+the most valuable output a failed hunt produces and the thing that evaporates
+if it only lives in an analyst's head.
+
+A `blind_spots:` entry is that record, written once and referenced from
+wherever the dead end occurs:
+
+```yaml
+blind_spots:
+  - id: no-ca-audit-events
+    stage: esc1-enrolment                  # optional; a §3.4 stage slug
+    requires: "ADCS role-service auditing (4886–4888) on every issuing CA"
+    question: "which host each certificate request came from"
+    risk: >
+      Without the source host, an issued certificate cannot be tied to a
+      workstation, so containment scopes to the identity only and the actor's
+      foothold survives.
+    owner: pki-platform
+    remediation: "enable Audit Certification Services + CA AuditFilter 127"
+```
+
+| key | meaning |
+|---|---|
+| `id` | required, unique; what the references below name |
+| `requires` | the source, field, retention or process that is missing |
+| `question` | what could not be answered without it |
+| `risk` | the business exposure of leaving it that way — prose, at whatever fidelity the author can manage |
+| `stage`, `owner`, `remediation` | optional: where in the chain, who fixes it, how |
+
+Three things point at a blind spot:
+
+- a `coverage:` entry with `status: not_visible` (`blind_spot: <id>`, §3.4);
+- an `unavailable:` branch — `unavailable: → escalate-gap (blind_spot: <id>)` — so
+  the decision that could not be made names its cost;
+- a run result's `telemetry_coverage.missing[].blind_spot` (§12), so the gap the
+  runtime actually hit is the one the author anticipated.
+
+Aggregated across a library, blind spots are the demand signal for the next
+data source. Lint: ids unique (error); a reference to an undeclared id (error);
+an entry with no `requires` or `risk` warns; the `quality` profile warns on an
+`unavailable:` branch that names no blind spot.
+
+### 3.6 Provenance — who wrote it, where it came from, whether a machine drafted it
+
+```yaml
+provenance:
+  authors:                        # people or teams; a string or {name, org, contact}
+    - { name: ISAC hunt team, org: Example ISAC }
+  source:                         # when the hunt was imported or adapted
+    system: misp                  # misp | cacao | huntbase | url | other
+    ref: 2930ccb3-…               # event uuid / playbook id / URL
+    imported: 2026-08-18
+  generated:                      # when a tool drafted it
+    by: hunt-pipeline
+    model: <model id>
+    from: https://…               # the report it was generated from
+    gates: [dry-run, lint, critic, human-review]   # checks it passed
+```
+
+All optional. A public library can say which hunts were machine-drafted and
+what they passed; an importer records where a peer's hunt came from instead of
+stashing an id in a profile block. Profiles map `authors` to their own
+contributor field (MISP `contributor`, CACAO `created_by`) and carry the rest
+in their extension. Lint: shape and vocabulary warnings only.
 
 ### 3.2 Severity
 Prefer the ordinal words `critical | high | medium | low`. A numeric `severity`
@@ -159,11 +325,32 @@ SecurityEvent
 
 ### 5.1 Language tag — open, linted
 `query_language` is an **open string**. A compiler MUST NOT reject unknown
-languages; a linter SHOULD warn outside a configurable known set (e.g. `kql`,
-`spl`, `sql`, `sqlite`, `eql`, `esql`, `esdsl`, `aql`, `osquery`, `cypher`,
-`sigma`, `stix`, `yara`, `kestrel`). Runtimes map the tag to whatever transport
-they have (see profiles); an unmapped language is a profile-level lint, not a
-format error.
+languages; a linter SHOULD warn outside the known set below. Runtimes map the
+tag to whatever transport they have (see profiles); an unmapped language is a
+profile-level lint, not a format error.
+
+The known set, and how each tag shares (its HUNT-EX `query-language` value —
+the single table the reference linter and the MISP exporter both read):
+
+| tag | HUNT-EX | note |
+|---|---|---|
+| `kql`, `kusto` | `kusto` | Microsoft Sentinel / Defender |
+| `spl` | `spl` | Splunk |
+| `esql` | `esql` | Elastic ES\|QL |
+| `eql` | `eql` | Elastic Event Query Language |
+| `esdsl` | `other` | Elasticsearch Query DSL — HUNT-EX has no peer (`kibana-query` is Kibana's KQL) |
+| `aql` | `aql` | IBM QRadar |
+| `xql` | `xql` | Palo Alto Cortex |
+| `cql` | `cql` | CrowdStrike |
+| `sql`, `mysql`, `sqlite`, `osquery` | `sql` | dialects share one value |
+| `cypher`, `kestrel` | `other` | graph / hunting DSLs |
+| `sigma`, `yara`, `yara-l` | same name | portable detection formats |
+| `stix` | `stix-pattern` | STIX 2 patterning |
+| `suricata`, `snort` | `suricata-snort` | network rules |
+| `shell`, `bash`, `powershell`, `python`, `pseudocode` | same name (`bash` → `shell`) | scripts and prose logic |
+
+Anything else exports as `other`. Which tags a runtime *executes* is that
+runtime's profile (PROFILES.md), not this table.
 
 ### 5.2 Info-string parameters
 - `target=<slug>` — a frontmatter `targets:` entry (§6). Required for queries.
@@ -199,6 +386,69 @@ expressive and CACAO/SOAR-portable.
 than an ad-hoc query): body is `pack: <name>` or a tool-native spec, with the
 same `target=`/`params=` info-string.
 
+### 5.5 Verification contract — what a query reads, whether it has run
+
+A query block says which language it is in and which target it binds to, but
+not what it *reads*, so a runtime cannot preflight it and a reader cannot tell
+whether it has ever run. Four optional Tier-2 attributes close that gap:
+
+````markdown
+## rare-node-launches
+```kql target=edr params=(days=lookback)
+~~~yaml
+source: DeviceProcessEvents            # surface, table or index the query reads
+reads: [DeviceName, FolderPath, InitiatingProcessFileName, Timestamp]
+verified: dry-run                      # none | dry-run | executed
+verified_at: 2026-09-07
+~~~
+DeviceProcessEvents | where …
+```
+````
+
+`reads` lets a runtime check column availability before launch and lets a
+coverage report say, per column, what is missing. `verified` lets a library
+filter out never-run content; it is a claim about *this revision* of the query
+— the linter cannot know whether the query changed since `verified_at`, so
+drift is the author's to manage (the `quality` profile warns past a
+configurable age). Lint: off-vocabulary `verified` warns; `verified: none` on a
+`tlp: clear` hunt warns (public content should have been run somewhere);
+`verified_at` without `verified` warns.
+
+The Huntbase definition carries these as named `primitive_config` keys
+(`source`, `reads`, `verified`, `verified_at`) so the runtime can act on them;
+other profiles carry them as Tier-2 attributes.
+
+### 5.6 Expected signal and silence — what an empty result does not prove
+
+§7.2 separates "examined, undecided" from "could not examine" at decision
+level. A query step has no place to say what a hit looks like and what an empty
+result proves, and that is where most silent-benign mistakes are made. Two
+optional Tier-2 attributes:
+
+````markdown
+```kql target=siem
+~~~yaml
+expected: >
+  One or more 4886/4887 events whose Attributes carry a SAN naming a principal
+  other than the requester. Zero rows is the common case.
+silence: not_evidence_of_absence     # default | evidence_of_absence
+~~~
+…
+```
+````
+
+| value | meaning |
+|---|---|
+| `not_evidence_of_absence` | (default) the source may be incomplete for the window — off by default, retention rolled, partially onboarded — so zero rows says nothing about the behaviour |
+| `evidence_of_absence` | the source is complete for the window; zero rows means the behaviour did not occur where this source would see it |
+
+Lint: a decision whose `else:` reaches `end` (explicitly or by omission), and
+whose upstream query steps *all* declare `silence: not_evidence_of_absence`,
+warns — the hunt is closing on silence its own author said proves nothing.
+Route the `else:` to a review or collection step, or examine a source whose
+silence is evidence. The rule fires only when `silence:` was written; a hunt
+that says nothing is linted exactly as before.
+
 ---
 
 ## 6. Targets (data sources, agents, people)
@@ -224,6 +474,23 @@ A runtime uses its own namespace hint if present, else resolves the abstract
 The set of targets referenced by query steps is the hunt's **data
 requirements** — runtimes use it for a "do you have the sources this hunt needs"
 check.
+
+**Telemetry planes.** `category` says where data is *stored*; a plane says what
+kind of telemetry it *is* — which is what an organisation actually knows it has
+or lacks. A data-source target resolves to one or more planes from the closed
+set `endpoint | network | identity | email | cloud-control-plane |
+cloud-workload | saas | ot-ics`:
+
+- derived from `category` where unambiguous: `endpoint`/`edr` → `endpoint`,
+  `iam`/`identity` → `identity`, `network` → `network`, `email` → `email`,
+  `cloud` → `cloud-control-plane`, `cloud-workload`, `saas`, `ot`/`ics` → `ot-ics`;
+- stated explicitly on a store, which may hold several:
+  `siem: { category: siem, telemetry: [identity, endpoint], name: SIEM }`.
+
+A linter notes (info) when a query's target resolves to no plane — a warning
+under the `quality` profile — and warns when a stated plane is off-vocabulary. Planes feed data-requirement checks, run-result
+`telemetry_coverage` (§12) and sharing tags (PROFILES §3) without any
+profile-specific override.
 
 ---
 
@@ -271,6 +538,12 @@ them is how hunts quietly conclude "benign":
 `indeterminate:`. It MUST NOT route to a step that closes the hunt as benign —
 under the default `missing_data: not_benign` guardrail (§8.1) a linter rejects
 that. "We didn't look" is not a finding.
+
+An `unavailable:` branch MAY name the blind spot it is the cost of (§3.5):
+
+```markdown
+unavailable:   → request-dns-logs (blind_spot: no-dns-telemetry)
+```
 
 ### 7.3 Switch (multi-way)
 ```markdown
@@ -414,6 +687,15 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `parameters:` | `parameters[] { name, type, default? }` |
 | `targets:` | `targets[] { slug, category|agent|role, bindings{} }` |
 | `labels: attack.*` | `attack_techniques[]` |
+| `rationale:` / `analysis:` | `playbook.rationale`, `playbook.analysis` — prose on the hypothesis (§3.1) |
+| `provenance:` | `provenance { authors[], source{system, ref, imported}, generated{by, model, from, gates[]} }` (§3.6) |
+| `hunt:` | `hunt { trigger, methodology, applicability, handoff, justification, assets, review_by }` (§3.3) |
+| `scenario:` / `coverage:` | `scenario { summary, stages[] }`, `coverage[] { stage, status, steps[], reason, blind_spot }` (§3.4) |
+| `blind_spots:` | `blind_spots[] { id, stage, requires, question, risk, owner, remediation }` (§3.5) |
+| query `~~~yaml` `source/reads/verified/verified_at` | `step.config { source, reads[], verified, verified_at }` (§5.5) |
+| query `~~~yaml` `expected/silence` | `step.config { expected, silence }` (§5.6) |
+| `unavailable: → x (blind_spot: id)` | `edge { branch: on_unavailable }` + `step.blind_spot` (§7.2) |
+| `targets.*.telemetry` | `targets[].telemetry[]` — declared or derived from category (§6) |
 | `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |
 | `unavailable:` | `edge { branch: on_unavailable }` (§7.2) |
 | `$var` / `{{param}}` | runtime variable / launch parameter |
@@ -460,6 +742,12 @@ hunt_result:
     missing:
       - target: edr
         impact: "process ancestry for the requesting hosts was not checked"
+        blind_spot: no-edr-ancestry   # the §3.5 record this gap is an instance of
+
+  outcome: inconclusive          # §12.3 — the programme-level answer
+  byproducts: [data-source-gap]
+  handoff: keep-as-periodic-hunt
+  period: { start: 2026-07-17T00:00:00Z, end: 2026-07-31T00:00:00Z }
 
   actions_taken: ["queried SIEM for 4769 events", "clustered by account"]
   hunting_recommendations: ["same accounts across other forests"]
@@ -495,10 +783,48 @@ tell "we checked and it's fine" from "we never looked."
 These are checkable: `huntmd validate <result.yaml>` lints a result document
 against them, the same way it lints a hunt.
 
+### 12.3 Outcome, byproducts, handoff, period
+
+`disposition` is what the run found; the things a hunt *programme* shares are
+different questions, and a sharing profile that guesses them from the
+disposition guesses wrong (`suspicious` is not a confirmed hypothesis; "not
+confirmed" and "confirmed benign" are not inferable). Four optional
+closed-vocabulary fields record them. The vocabularies are HUNT-EX's, so they
+share without translation.
+
+| field | values | meaning |
+|---|---|---|
+| `outcome` | `hypothesis-confirmed-malicious`, `hypothesis-confirmed-benign`, `hypothesis-not-confirmed`, `inconclusive` | what the run says about the hypothesis |
+| `byproducts` | list of `detection-gap`, `data-source-gap`, `tooling-gap`, `process-gap`, `vuln-or-misconfig` | what the run produced besides an answer |
+| `handoff` | `promote-to-detection`, `keep-as-periodic-hunt`, `retire`, `escalated-to-ir`, `handed-to-detection-engineering` | the per-run decision about what happens next |
+| `period` | `{ start, end }`, ISO-8601 | the window actually examined — `lookback` is a parameter, not a record |
+
+Rules: `outcome: hypothesis-confirmed-benign` needs `benign_supporting`
+evidence (mirrors 12.2 rule 1); `disposition: malicious` with
+`outcome: hypothesis-not-confirmed` is an error; `telemetry_coverage.missing`
+with a `byproducts` list that omits `data-source-gap` warns. A
+`missing[].blind_spot` names the hunt's §3.5 record the gap is an instance of,
+so the gaps a runtime actually hit aggregate against the ones the author
+anticipated.
+
+Results stay out of the hunt file. A hunt is a playbook; `last_run:` or a run
+history belongs in a results store, not in frontmatter.
+
 ## 13. Linting (against a target profile)
 A hunt is linted for: flow reachability; variable def-before-use; every query has
 a `target`; every `if~:` has `indeterminate:`; every `agent` step has `tools` +
-bounds; destructive `action`s are gated; and — per the chosen profile —
-unsupported kinds/languages/dataflow reported as actionable warnings, not silent
-mis-compiles. Profiles (runtime, interchange, sharing) and what each one lints
-are enumerated in PROFILES.md.
+bounds; destructive `action`s are gated; closed vocabularies (§3.3, §3.4, §3.5,
+§5.5, §5.6, §6) — off-vocabulary warns, a dangling reference errors; and — per
+the chosen profile — unsupported kinds/languages/dataflow reported as
+actionable warnings, not silent mis-compiles. Profiles (runtime, interchange,
+sharing) and what each one lints are enumerated in PROFILES.md.
+
+Three severities: **error** (the hunt cannot mean what it says — a dangling
+edge, a benign close on unexamined data), **warn** (legal but conspicuous), and
+**info** (a deprecation or migration note). Only errors affect the exit code.
+
+An opt-in **`quality` profile** adds the rules that make a hunt more than a rule
+— indicator-list queries, converging fuzzy branches, containment verbs in prose,
+missing justification, dead ends with no recorded cost (PROFILES.md §5). It adds
+no errors and runs under no default profile, so adopting it is a choice, not an
+upgrade cost.
