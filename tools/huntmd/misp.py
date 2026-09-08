@@ -338,11 +338,19 @@ def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None
     return _object("threat-hunt-context", ns, "context", attrs)
 
 
+def _hypothesis_id(pb: Playbook) -> str:
+    """``H<n>`` from `series.index` (SPEC §3.8), so the parts of one series keep
+    distinct local ids when they are shared into the same event."""
+    series = pb.meta.get("series")
+    idx = series.get("index") if isinstance(series, dict) else None
+    return f"H{idx}" if isinstance(idx, int) and idx > 0 else "H1"
+
+
 def _hypothesis_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None) -> dict:
     a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, "hypothesis", rel, val), **kw)  # noqa: E731
     hyp = str(pb.meta.get("hypothesis") or "").strip()
     attrs = [
-        a("hypothesis-id", "H1"),
+        a("hypothesis-id", _hypothesis_id(pb)),
         a("hypothesis", hyp or "TODO: hypothesis"),
         a("scope", "In-Scope"),
     ]
@@ -383,7 +391,7 @@ def _query_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict:
     a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, f"query:{s.slug}", rel, val), **kw)  # noqa: E731
     lang = (s.lang or "").lower()
     attrs = [
-        a("hypothesis-id", "H1"),
+        a("hypothesis-id", _hypothesis_id(pb)),
         a("query", s.body.rstrip("\n"), comment=f"hunt.md step: {s.slug}"),
         a("query-language", _LANG_TO_OBJECT_LABEL.get(lang, lang.upper() if lang else "Other")),
     ]
@@ -448,6 +456,7 @@ def _portable_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict | None:
 def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, list[dict]]:
     """A ``threat-hunt-finding`` from a SPEC §12 run result, plus the outcome tags."""
     r = result.get("hunt_result") or result
+    _ = pb
     a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, f"finding:{r.get('run', '')}", rel, val), **kw)  # noqa: E731
     disposition = str(r.get("disposition") or "inconclusive")
     hunt_ex_outcome, obj_outcome = _DISPOSITION_OUTCOME.get(disposition, ("inconclusive", "Inconclusive"))
@@ -480,7 +489,7 @@ def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, li
         parts.append(f"Not examined — {m.get('target')}: {str(m.get('impact', '')).strip()}")
 
     attrs = [
-        a("hypothesis-id", "H1"),
+        a("hypothesis-id", _hypothesis_id(pb)),
         a("outcome", obj_outcome),
         a("conclusion", "\n".join(parts)),
     ]
@@ -609,6 +618,29 @@ def playbook_to_misp(
                 | {"category": "External analysis"}
             )
             event["Attribute"][-1].pop("object_relation")
+    # Related hunts and the series position (SPEC §3.8). MISP has no hunt-linkage
+    # object, so these travel as annotated attributes a peer can read and follow.
+    series = pb.meta.get("series")
+    if isinstance(series, dict) and series.get("slug"):
+        event["Attribute"].append(
+            _attr(None, f"{series.get('slug')} part {series.get('index', '?')}/{series.get('total', '?')}",
+                  uid=_uid(ns, "attr", "series"), comment=f"hunt.md series: {series.get('title') or series.get('slug')}")
+        )
+        event["Attribute"][-1].pop("object_relation")
+    for entry in pb.meta.get("related") or []:
+        if not isinstance(entry, dict) or not entry.get("hunt"):
+            continue
+        ref_value = str(entry["hunt"])
+        is_url = "://" in ref_value
+        comment = f"related hunt ({entry.get('relation', 'related')})"
+        if entry.get("reason"):
+            comment += f": {entry['reason']}"
+        event["Attribute"].append(
+            _attr(None, ref_value, type_="link" if is_url else "text",
+                  uid=_uid(ns, "attr", "related", ref_value), comment=comment.strip())
+            | ({"category": "External analysis"} if is_url else {})
+        )
+        event["Attribute"][-1].pop("object_relation")
     return {"Event": event}
 
 
@@ -669,7 +701,7 @@ def misp_to_source(defn: Any) -> str | None:
     return None
 
 
-def misp_to_playbook(defn: Any) -> Playbook:
+def misp_to_playbook(defn: Any, *, hypothesis: int = 0) -> Playbook:
     """Reconstruct a Playbook from a MISP event.
 
     Prefers the attached source (exact). Otherwise builds a draft from the
@@ -692,14 +724,16 @@ def misp_to_playbook(defn: Any) -> Playbook:
 
     context = _obj_attrs(by_name.get("threat-hunt-context", [{}])[0])
     hyps = [_obj_attrs(o) for o in by_name.get("threat-hunt-hypothesis", [])]
-    hyp = hyps[0] if hyps else {}
+    index = hypothesis if 0 <= hypothesis < len(hyps) else 0
+    hyp = hyps[index] if hyps else {}
+    hyp_id = _first(hyp, "hypothesis-id") or ""
 
     pb = Playbook()
     pb.name = _first(context, "hunt-title") or str(ev.get("info") or "Imported hunt")
     meta: dict[str, Any] = {"type": "investigation", "name": pb.name}
 
     labels = ["hunt"]
-    for h in hyps:
+    for h in ([hyp] if hyps else []):
         for tid in h.get("attack-id") or []:
             for m in re.finditer(r"T\d{4}(?:\.\d{3})?", tid, re.I):
                 lab = f"attack.{m.group(0).lower()}"
@@ -714,12 +748,9 @@ def misp_to_playbook(defn: Any) -> Playbook:
     threat = str(ev.get("threat_level_id") or "")
     meta["severity"] = {"1": "high", "2": "medium", "3": "low"}.get(threat, "medium")
 
-    hypothesis_text = _first(hyp, "hypothesis")
-    if len(hyps) > 1:
-        hypothesis_text = (hypothesis_text or "") + "\n\nTODO: this event carried " + str(len(hyps)) + " hypotheses; hunt.md is one hypothesis per file — split the others: " + " | ".join(
-            (_first(h, "hypothesis-id") or "?") + ": " + (_first(h, "hypothesis") or "")[:80] for h in hyps[1:]
-        )
-    meta["hypothesis"] = hypothesis_text or "TODO: state the hypothesis (event had no threat-hunt-hypothesis object)"
+    meta["hypothesis"] = _first(hyp, "hypothesis") or "TODO: state the hypothesis (event had no threat-hunt-hypothesis object)"
+    if _first(hyp, "scope") and "out" in str(_first(hyp, "scope")).lower():
+        meta["hunt"] = {"trigger": "prior-hunt"}  # an out-of-scope hypothesis someone chose not to test
 
     refs = []
     for a in ev.get("Attribute") or []:
@@ -759,7 +790,14 @@ def misp_to_playbook(defn: Any) -> Playbook:
             s.attrs["description"] = desc
         steps.append(s)
 
-    for i, o in enumerate(by_name.get("threat-hunt-query", []), 1):
+    # One hypothesis per file (CONTRIBUTING), so take only this hypothesis's
+    # queries — the objects say which via `hypothesis-id`. An event whose queries
+    # declare no id belongs to the one hypothesis it has.
+    query_objects = by_name.get("threat-hunt-query", [])
+    if hyp_id and len(hyps) > 1:
+        owned = [o for o in query_objects if (_first(_obj_attrs(o), "hypothesis-id") or hyp_id) == hyp_id]
+        query_objects = owned or query_objects
+    for i, o in enumerate(query_objects, 1):
         a = _obj_attrs(o)
         ql = (_first(a, "query-language") or "other").strip().lower()
         lang = _HUNT_EX_TO_LANG.get(ql, re.sub(r"[^a-z0-9-]", "", ql) or "text")
@@ -769,7 +807,7 @@ def misp_to_playbook(defn: Any) -> Playbook:
     # (SPEC §5.8), not a separate step; one that stands alone becomes a step.
     query_uuid_to_slug = {
         str(o.get("uuid")): steps[i].slug
-        for i, o in enumerate(by_name.get("threat-hunt-query", []))
+        for i, o in enumerate(query_objects)
         if i < len(steps) and o.get("uuid")
     }
     for name, rule_rel, name_rel, fallback_target in (
@@ -800,6 +838,8 @@ def misp_to_playbook(defn: Any) -> Playbook:
 
     # Findings become a manual review step: the imported evidence a re-run should be compared against.
     findings = [_obj_attrs(o) for o in by_name.get("threat-hunt-finding", [])]
+    if hyp_id:  # a finding names the hypothesis it concludes; keep this one's
+        findings = [f for f in findings if hyp_id in (f.get("hypothesis-id") or [hyp_id])]
     if findings:
         f = findings[0]
         body = f"Prior finding ({_first(f, 'outcome') or '?'}): {_first(f, 'conclusion') or ''}".strip()
@@ -835,6 +875,25 @@ def misp_to_playbook(defn: Any) -> Playbook:
     if contributors:
         provenance["authors"] = [str(c) for c in contributors]
     meta["provenance"] = provenance
+    # The other hypotheses in the event are sibling hunts, not a TODO in this
+    # one's text (SPEC §3.8): one hypothesis per file, declared and navigable.
+    if len(hyps) > 1:
+        event_slug = re.sub(r"[^a-z0-9]+", "-", str(ev.get("info") or "hunt").lower()).strip("-") or "hunt"
+        meta["series"] = {
+            "slug": event_slug,
+            "index": index + 1,
+            "total": len(hyps),
+            "title": str(ev.get("info") or "").strip() or event_slug,
+        }
+        meta["related"] = [
+            {
+                "hunt": f"{event_slug}-{(_first(h, 'hypothesis-id') or f'h{i + 1}').lower()}",
+                "relation": "sibling",
+                "reason": (_first(h, "hypothesis") or "")[:160],
+            }
+            for i, h in enumerate(hyps)
+            if i != index
+        ]
     if _first(hyp, "rationale"):
         meta["rationale"] = _first(hyp, "rationale")
     if _first(hyp, "analysis"):
@@ -861,6 +920,35 @@ def misp_to_markdown(defn: Any) -> str:
     if source is not None:
         return source
     return playbook_to_markdown(misp_to_playbook(defn))
+
+
+def hypothesis_count(defn: Any) -> int:
+    """How many ``threat-hunt-hypothesis`` objects the event carries."""
+    ev = _find_event(defn)
+    if ev is None or misp_to_source(defn) is not None:
+        return 1
+    return sum(1 for o in ev.get("Object") or [] if str(o.get("name")) == "threat-hunt-hypothesis") or 1
+
+
+def misp_to_markdowns(defn: Any) -> list[tuple[str, str]]:
+    """``[(filename, hunt.md), …]`` — one file per hypothesis (SPEC §3.8).
+
+    hunt.md is one hypothesis per file, so an event carrying H1…Hn imports as n
+    linked files rather than one lossy document. An event with the exact source
+    attached (or a single hypothesis) yields one file, unchanged.
+    """
+    source = misp_to_source(defn)
+    if source is not None:
+        pb = parse_markdown(source)
+        return [(f"{_slug(pb)}.md", source)]
+    n = hypothesis_count(defn)
+    out: list[tuple[str, str]] = []
+    for i in range(n):
+        pb = misp_to_playbook(defn, hypothesis=i)
+        series = pb.meta.get("series") or {}
+        name = f"{series.get('slug')}-h{series.get('index')}.md" if n > 1 and series else f"{_slug(pb)}.md"
+        out.append((name, playbook_to_markdown(pb)))
+    return out
 
 
 # --- lint (profile: misp) ---------------------------------------------------------

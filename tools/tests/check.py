@@ -730,6 +730,78 @@ _pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")
 report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
 report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
 
+print("\nrelated hunts + series (SPEC §3.8)")
+_sr = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+series: {{slug: chain, index: {idx}, total: {tot}, title: part}}
+related:
+  - {{hunt: {ref}, relation: {rel}{reason}}}
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem
+x
+```
+→ end
+"""
+_sr_ok = _sr.format(idx=2, tot=3, ref="other-hunt", rel="precedes", reason="")
+report("well-formed series + related lints clean", not [i for i in validate_markdown(_sr_ok, profile="format") if i.level in ("error", "warn")], str(validate_markdown(_sr_ok, profile="format")))
+report("index above total is an error", any("exceeds total" in i.message for i in validate_markdown(_sr.format(idx=4, tot=3, ref="o", rel="precedes", reason=""), profile="format")))
+report("an off-vocabulary relation warns", any("relation 'vibes'" in i.message for i in validate_markdown(_sr.format(idx=1, tot=2, ref="o", rel="vibes", reason=""), profile="format")))
+report("supersedes without a reason warns", any("with no reason" in i.message for i in validate_markdown(_sr.format(idx=1, tot=2, ref="o", rel="supersedes", reason=""), profile="format")))
+report("…and is quiet with one", not any("with no reason" in i.message for i in validate_markdown(_sr.format(idx=1, tot=2, ref="o", rel="supersedes", reason=", reason: replaced"), profile="format")))
+report("a navigational slug that names nothing in the library warns", any(i.level == "warn" and "cannot follow it" in i.message for i in validate_markdown(_sr_ok, profile="format", bundle={"kerberoasting"})))
+report("an unwritten alternative is only an info note", [i.level for i in validate_markdown(_sr.format(idx=1, tot=1, ref="not-written-yet", rel="out-of-scope-alternative", reason=", reason: needs network telemetry"), profile="format", bundle={"kerberoasting"}) if "not in this library yet" in i.message] == ["info"])
+report("…and is quiet when it resolves", not any("not a hunt in this library" in i.message for i in validate_markdown(_sr_ok, profile="format", bundle={"other-hunt"})))
+report("a URL reference is never checked against the library", not any("not a hunt" in i.message for i in validate_markdown(_sr.format(idx=1, tot=2, ref="https://x/y.md", rel="sibling", reason=""), profile="format", bundle=set())))
+report("series/related survive md → CACAO → md", parse_markdown(cacao_to_markdown(markdown_to_cacao(_sr_ok))).meta["series"]["index"] == 2)
+_sr_ev = markdown_to_misp(_sr_ok)["Event"]
+report("the hypothesis id follows the series index (H2 for part 2)", any(a["object_relation"] == "hypothesis-id" and a["value"] == "H2" for o in _sr_ev["Object"] if o["name"] == "threat-hunt-hypothesis" for a in o["Attribute"]))
+report("series + relation travel as annotated event attributes", any("part 2/3" in str(a.get("value")) for a in _sr_ev["Attribute"]) and any("related hunt (precedes)" in str(a.get("comment")) for a in _sr_ev["Attribute"]))
+
+# A peer's event with two hypotheses: one file per hypothesis, wired together.
+_multi = {
+    "Event": {
+        "info": "Two-part intrusion", "uuid": "22222222-3333-4444-5555-666666666666", "threat_level_id": "2",
+        "Tag": [{"name": "tlp:green"}, {"name": 'hunt-ex:telemetry="endpoint"'}],
+        "Attribute": [],
+        "Object": [
+            {"name": "threat-hunt-context", "uuid": "c0", "Attribute": [{"object_relation": "hunt-title", "value": "Two-part intrusion"}]},
+            {"name": "threat-hunt-hypothesis", "uuid": "h1", "Attribute": [
+                {"object_relation": "hypothesis-id", "value": "H1"},
+                {"object_relation": "hypothesis", "value": "Loader persisted via a scheduled task"},
+                {"object_relation": "attack-id", "value": "T1053.005"}]},
+            {"name": "threat-hunt-hypothesis", "uuid": "h2", "Attribute": [
+                {"object_relation": "hypothesis-id", "value": "H2"},
+                {"object_relation": "hypothesis", "value": "Data left over a blockchain C2 channel"},
+                {"object_relation": "attack-id", "value": "T1102"}]},
+            {"name": "threat-hunt-query", "uuid": "q1", "Attribute": [
+                {"object_relation": "hypothesis-id", "value": "H1"},
+                {"object_relation": "query", "value": "DeviceProcessEvents | where x"},
+                {"object_relation": "query-language", "value": "KQL"}]},
+            {"name": "threat-hunt-query", "uuid": "q2", "Attribute": [
+                {"object_relation": "hypothesis-id", "value": "H2"},
+                {"object_relation": "query", "value": "DeviceNetworkEvents | where y"},
+                {"object_relation": "query-language", "value": "KQL"}]},
+        ],
+    }
+}
+from huntmd.misp import hypothesis_count, misp_to_markdowns  # noqa: E402
+
+report("hypothesis_count sees both", hypothesis_count(_multi) == 2)
+_files = misp_to_markdowns(_multi)
+report("a two-hypothesis event splits into two files", len(_files) == 2 and all(n.endswith(".md") for n, _ in _files), [n for n, _ in _files])
+_p1, _p2 = (parse_markdown(x) for _, x in _files)
+report("each file keeps its own hypothesis and its own query", "scheduled task" in str(_p1.meta["hypothesis"]) and "blockchain" in str(_p2.meta["hypothesis"]) and "DeviceProcessEvents" in _p1.steps[0].body and "DeviceNetworkEvents" in _p2.steps[0].body)
+report("each file keeps only its own ATT&CK label", _p1.meta["labels"] == ["hunt", "attack.t1053.005"] and _p2.meta["labels"] == ["hunt", "attack.t1102"], f"{_p1.meta['labels']} / {_p2.meta['labels']}")
+report("the parts are wired with series + sibling relations", _p1.meta["series"] == {"slug": "two-part-intrusion", "index": 1, "total": 2, "title": "Two-part intrusion"} and _p2.meta["related"][0]["relation"] == "sibling", str(_p1.meta.get("series")))
+report("both split files lint clean", not [str(i) for pb_md in (x for _, x in _files) for i in validate_markdown(pb_md, profile="format") if i.level == "error"])
+report("without --split the first hypothesis converts and the rest are declared", parse_markdown(misp_to_markdown(_multi)).meta["related"][0]["reason"].startswith("Data left"))
+
 print("\nquery role + paired portable form (SPEC §5.8)")
 _pf = """---
 hypothesis: x

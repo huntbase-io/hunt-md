@@ -270,6 +270,7 @@ searchable objects and tags MISP wants, and the exact source alongside them.
 | every `query` step | one `threat-hunt-query` — `query`, `query-language`, `data-source` (the target), `platform` (its binding), `comment` (role + params + description); linked `tests` → the hypothesis |
 | a paired ` ```<lang> portable ` block (SPEC §5.8) | MISP's own `sigma` / `yara` object — the rule, its title as `<lang>-rule-name`, a `context` naming the hunt.md step; linked `tests` → the hypothesis and `derived-from` → the query object |
 | a run result (SPEC §12), via `--result` | `threat-hunt-finding` — `outcome`, `conclusion` (disposition, per-step explanations, evidence summary, unexamined telemetry), `recommendation`; linked `concludes` → the hypothesis |
+| `series:` / `related:` (SPEC §3.8) | annotated event attributes (`… part 2/3`, `related hunt (<relation>): <reason>`); the hypothesis object's local id follows `series.index` |
 | `tlp:` | `tlp:*` event tag (and MISP `distribution`) |
 | `severity:` | `threat_level_id` |
 | `references:` | `link` attributes |
@@ -393,8 +394,18 @@ that surfaced, so you don't rediscover it:
   target categories — is `TODO`-marked, and the draft lints clean so
   `huntmd validate` points at exactly what an author still owes.
 
-An event with several `threat-hunt-hypothesis` objects imports the first and
-lists the rest under a `TODO` — hunt.md is one hypothesis per file.
+An event with several `threat-hunt-hypothesis` objects is **split**, because
+hunt.md is one hypothesis per file (SPEC §3.8):
+
+```bash
+huntmd convert peer-event.json --split -o hunts/     # one hunt.md per hypothesis
+```
+
+Each part keeps only the queries that declare its `hypothesis-id`, only its own
+ATT&CK labels, and its own finding; the parts are wired together with `series:`
+and `sibling` relations. Without `--split` the first hypothesis is converted and
+the rest are declared under `related:` (with each one's text as the `reason`), so
+nothing is lost and the CLI says how many parts there were.
 
 ---
 

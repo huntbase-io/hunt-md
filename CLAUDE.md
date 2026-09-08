@@ -25,6 +25,7 @@ python -m huntmd convert  ../some-cacao-playbook.json               # CACAO → 
 python -m huntmd convert  ../hunts/kerberoasting.md --to misp       # hunt.md → MISP event JSON (HUNT-EX tags + threat-hunt-* objects)
 python -m huntmd convert  ../hunts/kerberoasting.md --to misp --result ../examples/results/kerberoasting-run.yaml  # + threat-hunt-finding
 python -m huntmd convert  ../some-misp-event.json                   # MISP → hunt.md (exact via attachment, else draft)
+python -m huntmd convert  ../some-misp-event.json --split -o ../hunts/  # one file per threat-hunt-hypothesis (SPEC §3.8)
 python -m huntmd validate ../hunts/kerberoasting.md --profile misp  # HUNT-EX classifiability warnings
 python -m huntmd validate ../hunts/kerberoasting.md --profile quality  # opt-in "more than a rule" checks (PROFILES §5)
 python -m huntmd validate ../hunts/kerberoasting.md --max-tlp green  # publication gate (public repo policy)

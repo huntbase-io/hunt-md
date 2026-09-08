@@ -18,6 +18,17 @@ references:
   - name: <source>
     url: <url>
 
+# --- Part of a series? Related hunts? (SPEC §3.8) -----------------------------
+# One hypothesis per file — these are how the files point at each other.
+# series:  { slug: <series-slug>, index: 1, total: 3, title: <part title> }
+# related:
+#   - { hunt: <sibling-slug-or-url>, relation: precedes }   # follows | sibling |
+#                                                           # alternative | supersedes |
+#                                                           # superseded-by |
+#                                                           # out-of-scope-alternative
+#   - { hunt: <slug>, relation: out-of-scope-alternative,
+#       reason: <the hypothesis you chose not to test, and why> }
+
 # --- Provenance (SPEC §3.6) ---------------------------------------------------
 # provenance:
 #   authors: [{ name: <person or team>, org: <org> }]

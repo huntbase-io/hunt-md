@@ -135,6 +135,14 @@ VOLATILE_INDICATOR_MEMBERS = ("domain", "ip", "ipv4", "ipv6", "url", "hash")
 INDICATOR_SOURCE_KINDS = ("stix-collection", "misp-event", "feed", "article", "advisory", "incident", "manual")
 _PARAM_LIST_TYPE = re.compile(r"^list\[([a-z0-9-]+)\]$", re.I)
 
+#: How one hunt relates to another (SPEC §3.8). hunt.md is one hypothesis per
+#: file; these are how a chain, an alternative, or a replacement is declared.
+RELATIONS = ("precedes", "follows", "sibling", "alternative", "supersedes", "superseded-by", "out-of-scope-alternative")
+#: Relations a reader *navigates*: the target has to exist, or the link is broken.
+#: `alternative` and `out-of-scope-alternative` may name a hunt nobody has
+#: written yet — that is the point of declaring them — so they are only noted.
+NAVIGATIONAL_RELATIONS = ("precedes", "follows", "sibling", "supersedes", "superseded-by")
+
 #: Provenance (SPEC §3.6): who wrote it, where it came from, whether a machine drafted it.
 PROVENANCE_SOURCE_SYSTEMS = ("misp", "cacao", "huntbase", "url", "other")
 PROVENANCE_GATES = ("dry-run", "lint", "critic", "executed", "human-review")
@@ -815,7 +823,7 @@ def _config_for(s: Step) -> dict[str, Any]:
 #: Frontmatter keys the definition carries as first-class ``meta`` entries.
 _DEFINITION_META_KEYS = (
     "labels", "severity", "tlp", "hypothesis", "rationale", "analysis", "references", "parameters", "targets", "type",
-    "hunt", "scenario", "coverage", "blind_spots", "provenance",
+    "hunt", "scenario", "coverage", "blind_spots", "provenance", "series", "related",
 )
 
 
@@ -851,6 +859,8 @@ _FM_ORDER = (
     "rationale",
     "analysis",
     "hunt",
+    "series",
+    "related",
     "scenario",
     "coverage",
     "blind_spots",
@@ -1205,13 +1215,19 @@ class Issue:
         return f"[{self.level.upper():5}] {self.slug or '-'}: {self.message}"
 
 
-def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | None = None) -> list[Issue]:
+def validate_markdown(
+    text: str, *, profile: str = "huntbase", max_tlp: str | None = None, bundle: set[str] | None = None
+) -> list[Issue]:
     """Lint a hunt.md against the format + a profile.
 
     ``format`` checks the neutral spec only; ``huntbase`` adds that runtime's
     capability gaps; ``cacao`` adds none — every construct exports (PROFILES §2),
     so a hunt clean at ``format`` level is clean for interchange; ``misp`` warns
     where the HUNT-EX vocabulary can't classify the hunt (PROFILES §3).
+
+    ``bundle`` is the set of hunt slugs the caller can see (a library directory);
+    when given, a ``related:``/``series:`` reference to a local slug that isn't
+    in it is reported (SPEC §3.8). Without it, references are shape-checked only.
 
     ``max_tlp`` caps the permitted sharing level: a public repository lints with
     ``max_tlp="green"`` so an ``amber``/``red`` hunt fails CI rather than being
@@ -1241,6 +1257,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_narrative_and_provenance(pb)
     issues += _check_parameters(pb)
     issues += _check_detection_promotion(pb)
+    issues += _check_series_and_related(pb, bundle)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1611,6 +1628,67 @@ def _check_detection_promotion(pb: Playbook) -> list[Issue]:
     for s in queries:
         if s.portable and str(s.attrs.get("role") or "") != "detection-candidate":
             issues.append(Issue("info", s.slug, "has a portable block but is not role=detection-candidate — mark it if this is the query to promote"))
+    return issues
+
+
+_LOCAL_REF = re.compile(r"^[a-z0-9][a-z0-9._-]*$", re.I)
+
+
+def _check_series_and_related(pb: Playbook, bundle: set[str] | None) -> list[Issue]:
+    """`series:` and `related:` (SPEC §3.8): navigable, and pointing at something."""
+    issues: list[Issue] = []
+    series = pb.meta.get("series")
+    if series is not None:
+        if not isinstance(series, dict):
+            issues.append(Issue("error", "", "series: must be a mapping {slug, index, total, title}"))
+        else:
+            for key in ("slug", "index", "total"):
+                if series.get(key) in (None, ""):
+                    issues.append(Issue("warn", "", f"series: has no {key} — a reader can't tell where this part sits"))
+            idx, tot = series.get("index"), series.get("total")
+            if isinstance(idx, int) and isinstance(tot, int):
+                if idx < 1 or tot < 1:
+                    issues.append(Issue("error", "", f"series index/total must be positive (got {idx}/{tot})"))
+                elif idx > tot:
+                    issues.append(Issue("error", "", f"series index {idx} exceeds total {tot}"))
+            elif idx is not None or tot is not None:
+                issues.append(Issue("warn", "", "series index/total should be integers"))
+
+    related = pb.meta.get("related")
+    if related is None:
+        return issues
+    if not isinstance(related, list):
+        return issues + [Issue("error", "", "related: must be a list of {hunt, relation} entries")]
+    seen: list[tuple[str, str]] = []
+    for i, entry in enumerate(related):
+        if not isinstance(entry, dict):
+            issues.append(Issue("error", "", f"related[{i}] must be a mapping {{hunt, relation}}"))
+            continue
+        ref = str(entry.get("hunt") or "")
+        rel = str(entry.get("relation") or "")
+        if not ref:
+            issues.append(Issue("error", "", f"related[{i}] has no hunt: (a slug, a path or a URL)"))
+        if rel not in RELATIONS:
+            issues.append(Issue("warn", "", f"related[{i}]: relation '{rel}' not in {list(RELATIONS)}"))
+        if rel in ("out-of-scope-alternative", "supersedes", "superseded-by") and not entry.get("reason"):
+            issues.append(Issue("warn", "", f"related[{i}]: relation {rel} with no reason — say why, it is the analytic content peers want"))
+        if (ref, rel) in seen:
+            issues.append(Issue("warn", "", f"related[{i}]: duplicate {rel} → {ref}"))
+        seen.append((ref, rel))
+        # A bare slug is a claim about the library; check it when the caller
+        # told us what the library holds.
+        local = _LOCAL_REF.match(ref) and "://" not in ref
+        if bundle is not None and local:
+            stem = ref[:-3] if ref.endswith(".md") else ref
+            if stem not in bundle:
+                if rel in NAVIGATIONAL_RELATIONS:
+                    issues.append(Issue("warn", "", f"related[{i}]: {rel} → '{ref}' is not a hunt in this library — a reader cannot follow it; fix the slug or use a URL"))
+                else:
+                    article = "an" if str(rel).startswith(("a", "e", "i", "o", "u")) else "a"
+                    issues.append(Issue("info", "", f"related[{i}]: '{ref}' is not in this library yet — fine for {article} {rel or 'related'}, which may name a hunt nobody has written"))
+    if isinstance(series, dict) and series.get("total") and isinstance(series.get("total"), int) and series["total"] > 1:
+        if not any(str(e.get("relation")) in ("precedes", "follows", "sibling") for e in related if isinstance(e, dict)):
+            issues.append(Issue("info", "", "series of more than one part but no precedes/follows/sibling in related: — readers can't navigate between the parts"))
     return issues
 
 

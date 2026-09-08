@@ -308,6 +308,56 @@ more slowly and is not held to the same rule (recording `from:` on one is still
 good practice). The `quality` profile (§13) warns when a volatile list's
 `from.observed` is more than a year old.
 
+### 3.8 Related hunts and series
+
+A long intrusion chain is better hunted as two or three focused hunts than one
+shallow one, and hunt.md is deliberately **one hypothesis per file**. That only
+works if the files can point at each other.
+
+```yaml
+series:                        # this file's place in a deliberate sequence
+  slug: adcs-escalation
+  index: 2
+  total: 3
+  title: ADCS escalation, part 2 — enrolment and use
+related:
+  - { hunt: adcs-esc1-template-discovery, relation: precedes }
+  - { hunt: adcs-esc8-relay, relation: sibling }
+  - { hunt: https://example.org/hunts/old-adcs.md, relation: supersedes,
+      reason: "Replaced by the CA-database approach; the old one relied on 4886 auditing." }
+```
+
+| relation | meaning |
+|---|---|
+| `precedes` / `follows` | ordered parts of one investigation |
+| `sibling` | independent hypotheses about the same activity |
+| `alternative` | a different way to test the same hypothesis |
+| `supersedes` / `superseded-by` | one replaces the other |
+| `out-of-scope-alternative` | a hypothesis this hunt deliberately does **not** test, and why |
+
+`out-of-scope-alternative` is where a hypothesis the author *chose not to test*
+lives — real analytic content that previously had nowhere to go. `reason:` is
+expected on it, and on either `supersedes` direction.
+
+`hunt:` is a slug in the same library, a path, or a URL. Lint: `index ≤ total`
+(error); an off-vocabulary relation warns; a missing `reason` where one is
+expected warns; a duplicate relation warns. When the linter is given the
+library's slugs — the reference CLI passes the sibling `.md` files of the file
+being linted — a bare slug that names nothing in it warns for the relations a
+reader *navigates* (`precedes`, `follows`, `sibling`, either `supersedes`
+direction) and is an info note for `alternative` and
+`out-of-scope-alternative`, which may legitimately name a hunt nobody has
+written yet.
+
+Profiles: MISP export carries the series position and each relation as an
+annotated event attribute, and the hypothesis object's local id follows
+`series.index` (`H2` for part 2). On import, an event carrying several
+`threat-hunt-hypothesis` objects becomes several files rather than one lossy
+one: `huntmd convert event.json --split -o hunts/` writes one hunt per
+hypothesis — each with only the queries that declare its `hypothesis-id` — wired
+together with `series:` and `sibling` relations. Without `--split` the first
+hypothesis is converted and the rest are declared under `related:`.
+
 ## 4. Steps and step kinds
 
 Each `##` heading is one step; the heading text is its **slug** (stable
@@ -817,6 +867,7 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `labels: attack.*` | `attack_techniques[]` |
 | `rationale:` / `analysis:` | `playbook.rationale`, `playbook.analysis` — prose on the hypothesis (§3.1) |
 | `provenance:` | `provenance { authors[], source{system, ref, imported}, generated{by, model, from, gates[]} }` (§3.6) |
+| `series:` / `related:` | `series { slug, index, total, title }`, `related[] { hunt, relation, reason }` (§3.8) |
 | `hunt:` | `hunt { trigger, methodology, applicability, handoff, justification, assets, review_by }` (§3.3) |
 | `scenario:` / `coverage:` | `scenario { summary, stages[] }`, `coverage[] { stage, status, steps[], reason, blind_spot }` (§3.4) |
 | `blind_spots:` | `blind_spots[] { id, stage, requires, question, risk, owner, remediation }` (§3.5) |

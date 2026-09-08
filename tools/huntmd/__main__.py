@@ -18,7 +18,7 @@ from pathlib import Path
 import yaml
 
 from huntmd.cacao import cacao_to_markdown, markdown_to_cacao
-from huntmd.misp import is_misp_event, markdown_to_misp, misp_to_markdown
+from huntmd.misp import hypothesis_count, is_misp_event, markdown_to_misp, misp_to_markdown, misp_to_markdowns
 from huntmd.results import is_result_document, validate_result
 from huntmd.core import (
     ConversionError,
@@ -81,6 +81,16 @@ def _cmd_convert(args: argparse.Namespace) -> int:
             definition = json.loads(text) if path.suffix.lower() == ".json" else yaml.safe_load(text)
             # All inbound formats are JSON/YAML objects; tell them apart by shape.
             if is_misp_event(definition):
+                if args.split:
+                    return _write_split(definition, args.output)
+                n = hypothesis_count(definition)
+                if n > 1:
+                    print(
+                        f"note: this event carries {n} hypotheses; hunt.md is one hypothesis per file. "
+                        f"Converting the first and declaring the rest under `related:` — "
+                        f"re-run with --split -o <dir> to write all {n}.",
+                        file=sys.stderr,
+                    )
                 result = misp_to_markdown(definition)
             elif _looks_like_cacao(definition):
                 result = cacao_to_markdown(definition)
@@ -95,6 +105,22 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         print(f"wrote {args.output}", file=sys.stderr)
     else:
         sys.stdout.write(result)
+    return 0
+
+
+def _write_split(event: object, out: str | None) -> int:
+    """Write one hunt.md per hypothesis (SPEC §3.8) into a directory."""
+    files = misp_to_markdowns(event)
+    target = Path(out) if out else Path.cwd()
+    if target.suffix.lower() in (".md", ".markdown"):
+        print(f"error: --split writes several files; -o must be a directory (got {target})", file=sys.stderr)
+        return 2
+    target.mkdir(parents=True, exist_ok=True)
+    for name, text in files:
+        (target / name).write_text(text, encoding="utf-8")
+        print(f"wrote {target / name}", file=sys.stderr)
+    if len(files) == 1:
+        print("note: the event carried one hypothesis (or the exact source), so one file was written.", file=sys.stderr)
     return 0
 
 
@@ -120,7 +146,9 @@ def _cmd_validate(args: argparse.Namespace) -> int:
         print("error: not a hunt.md or a run result (expected 'hunt_result')", file=sys.stderr)
         return 2
 
-    issues = validate_markdown(text, profile=args.profile, max_tlp=args.max_tlp)
+    # Sibling .md files are the "library" a related:/series: slug can name (SPEC §3.8).
+    bundle = {p.stem for p in path.parent.glob("*.md") if p.name != path.name} or None
+    issues = validate_markdown(text, profile=args.profile, max_tlp=args.max_tlp, bundle=bundle)
     errors = [i for i in issues if i.level == "error"]
     for issue in issues:
         print(str(issue), file=sys.stderr)
@@ -146,7 +174,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="RUN",
         help="with --to misp: a run result (SPEC §12) to export as a threat-hunt-finding + hunt-ex:outcome",
     )
-    c.add_argument("-o", "--output", help="write to file instead of stdout")
+    c.add_argument("-o", "--output", help="write to file instead of stdout (a directory with --split)")
+    c.add_argument(
+        "--split",
+        action="store_true",
+        help="MISP input only: write one hunt.md per threat-hunt-hypothesis into -o "
+        "(hunt.md is one hypothesis per file; the parts are wired with series:/related:)",
+    )
     c.set_defaults(func=_cmd_convert)
 
     v = sub.add_parser("validate", help="lint a hunt.md or a run result")

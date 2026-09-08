@@ -42,6 +42,19 @@ hunt:                   # why this hunt exists and what happens after (SPEC §3.
     until every issuing CA's templates are hardened and audited.
   assets: [Active Directory, issuing CAs, tier-0 identities]
   review_by: 2027-03-01
+related:                # hypotheses this hunt deliberately does not test (SPEC §3.8)
+  - hunt: adcs-esc8-ntlm-relay-to-web-enrollment
+    relation: out-of-scope-alternative
+    reason: >
+      ESC8 (NTLM relay to the CA web-enrollment endpoint) reaches the same
+      outcome through a different mechanism and needs network telemetry this
+      hunt does not collect. It is a sibling hunt, not a branch of this one.
+  - hunt: adcs-template-misconfiguration-audit
+    relation: alternative
+    reason: >
+      A configuration audit answers "could this happen?" from the templates
+      alone; this hunt answers "did it happen?" from the request history. Run
+      the audit if you have no CA database to collect.
 scenario:               # the chain this hunt was written from, and what it can see of it (SPEC §3.4)
   summary: >
     Default machine-account quota → computer account → ESC1 enrolment naming a
