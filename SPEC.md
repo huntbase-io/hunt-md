@@ -1,6 +1,6 @@
 # hunt.md — specification
 
-**Version:** 0.6 (draft) · **Status:** Working proposal · **Changes:** see `CHANGELOG.md`
+**Version:** 0.7 (draft) · **Status:** Working proposal · **Changes:** see `CHANGELOG.md`
 **License of this document:** see `LICENSE`
 
 `hunt.md` is an **open, portable, human-first Markdown format for threat-hunting
@@ -616,10 +616,12 @@ always did, so no existing document changes meaning. Portable languages:
 `sigma`, `yara`, `yara-l`, `stix`, `suricata`, `snort`.
 
 Lint: an off-vocabulary `role` warns; a portable block in a non-portable
-language, or an empty one, warns; `hunt.handoff: promote-to-detection` (§3.3)
-with no `detection-candidate` query warns, because the hunt has promised a
-promotion without saying what gets promoted; a portable block on a step that is
-not the detection candidate is an info note.
+language, or an empty one, warns. `hunt.handoff: promote-to-detection` (§3.3)
+with no `detection-candidate` query is an info note by default and a warning
+under the `quality` profile — the hunt has promised a promotion without saying
+what gets promoted, but `handoff` predates `role`, so an existing hunt is
+notified rather than newly warned. A portable block on a step that is not the
+detection candidate is likewise a note.
 
 Profiles: the definition and CACAO carry the twin verbatim
 (`primitive_config.portable`, `x_hunt_portable`). MISP emits it as its own

@@ -1,5 +1,89 @@
 # Changelog
 
+## 0.7 — 2026-09-08 (draft)
+
+Every change is additive. A 0.6 hunt validates under 0.7 tooling with the same
+errors and the same warnings under `--profile format` and `--profile huntbase`
+(info-level notes may appear; they never affect the exit code), and a 0.7 hunt
+read by 0.6 tooling keeps every new key as unknown frontmatter or attributes.
+`tools/tests/check.py` asserts both against frozen copies of the 0.6 hunts.
+
+### Format (SPEC)
+
+- **§5.7 Prevalence and baseline** — `prevalence: {key, by, rare_below}` and
+  `baseline: {window, compare}`: the stack-count-and-compare pattern. A runtime
+  capable of native first-seen or prior-window calculation executes them
+  directly; others run the query as written. Both travel as named
+  `primitive_config` keys. Quality profile warns when no query declares
+  prevalence or aggregates.
+- **§3.7 Typed parameters and indicator provenance** — `type:` supports scalar
+  primitives (`string`, `duration`, `cidr`, `regex`, etc.) and typed lists
+  `list[<member>]` (`list[domain]`, `list[ip]`, `list[url]`, `list[hash]`,
+  `list[path]`). Volatile indicator lists declare `from: {kind, ref, observed}`.
+  Quality profile warns on volatile indicators observed over 365 days ago.
+- **§5.8 Query role and paired portable form** — `role=` info-string attribute
+  (`scoping`, `baseline`, `enrichment`, `triage`, `detection-candidate`). A
+  secondary fenced code block flagged `portable` (`sigma`, `yara`, `yara-l`,
+  `stix`, `suricata`, `snort`) attaches as the query's portable twin rather than
+  redefining the step. `hunt.handoff: promote-to-detection` without a
+  `detection-candidate` query is an info note by default and a warning under
+  `quality`.
+- **§3.8 Related hunts and series** — `series: {slug, index, total, title}` for
+  multi-part investigation chains, and `related: [{hunt, relation, reason}]`
+  (`precedes`, `follows`, `sibling`, `alternative`, `supersedes`,
+  `superseded-by`, `out-of-scope-alternative`). CLI `--split -o <dir>` splits
+  multi-hypothesis MISP events into series-wired hunt files.
+- **§8.2 Agent context budget and citation demand** — `context:` entries accept
+  `{step, rows}` objects to bound evidence input tokens alongside bare step
+  names; `cite: required | optional` states explicit citation demands at the
+  step level.
+- **MISP hygiene (#11)** — Stricter `is_misp_event` shape verification prevents
+  non-event YAML/JSON from being misidentified. CLI `--date` argument (or
+  `created:` frontmatter) pins the event date for reproducible, byte-stable
+  fixtures. `misp-galaxy:mitre-attack-pattern` tags emitted from named ATT&CK
+  references; `workflow:state` mirrors context status; sigma logsource target
+  derivation replaces SIEM guesses; multi-event restSearch responses parsed and
+  split cleanly.
+
+### Tooling
+
+- **Backward compatibility promise (0.6 → 0.7):** Frozen copies of the 0.6 repo
+  hunts added under `tools/tests/fixtures/*-0.6.md`; `check.py` asserts they lint
+  with identical errors and warnings under `format` and `huntbase` profiles.
+  Handoff promotion check is info-level under default profiles and warned only
+  under `quality`.
+- **JSON & CACAO export serialization:** CLI `convert` passes `default=str` to
+  `json.dumps` for `--to cacao` and `--to json` so `datetime.date` objects
+  parsed from YAML frontmatter and parameter declarations serialize without
+  `TypeError`.
+- **CLI `--date` flag:** Wired through `_cmd_convert` to `markdown_to_misp`,
+  enabling deterministic exports for fixtures and CI.
+- **Portable rule export/import:** In MISP, portable twins export as standard
+  `sigma`/`yara` objects linked `tests` → hypothesis and `derived-from` → the
+  query step; re-import restores them as twins on the corresponding step. In
+  CACAO, twins ride in `x_hunt_portable`.
+- **Quality profile additions:** Warns on stale indicator lists (>365 days) and
+  on hunts lacking any prevalence or aggregation steps.
+
+### Verified
+
+- `tools/tests/check.py`: All 90+ regression assertions passing, including
+  frozen 0.5 and 0.6 backward compatibility, CLI `--date` pinning, CACAO/JSON
+  serialization across all repository hunts, and multi-hypothesis event splitting.
+- Full profile validation matrix (`format`, `huntbase`, `misp`, `quality`, and
+  `--max-tlp green`) clean across all repository hunts.
+
+### Hunts
+
+- `hunts/adcs-esc1-certificate-abuse.md`: Added out-of-scope alternative under
+  `related:`, context budget with `cite: required` on triage, Sigma portable
+  twin with `role=detection-candidate`, and prevalence stack-count.
+- `hunts/kerberoasting.md`: Added prevalence stack-count.
+- `hunts/scattered-spider-identity-takeover.md`: Added typed `list[path]` parameter
+  with advisory provenance, Sigma portable twin with `role=detection-candidate`,
+  and prevalence stack-count.
+- `tools/tests/fixtures/`: Added frozen 0.6 versions of all three hunts.
+
 ## 0.6 — 2026-09-08 (draft)
 
 Every change is additive. A 0.5 hunt validates under 0.6 tooling with the same

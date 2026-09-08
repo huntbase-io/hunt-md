@@ -1262,7 +1262,7 @@ def validate_markdown(
     issues += _check_silence(pb)
     issues += _check_narrative_and_provenance(pb)
     issues += _check_parameters(pb)
-    issues += _check_detection_promotion(pb)
+    issues += _check_detection_promotion(pb, profile)
     issues += _check_series_and_related(pb, bundle)
 
     # edges reference existing nodes
@@ -1647,15 +1647,25 @@ def _check_agent_context(s: Step, slugs: set[str]) -> list[Issue]:
     return issues
 
 
-def _check_detection_promotion(pb: Playbook) -> list[Issue]:
-    """A hunt that says it promotes to detection must say *which* query (SPEC §5.8)."""
+def _check_detection_promotion(pb: Playbook, profile: str = "huntbase") -> list[Issue]:
+    """A hunt that says it promotes to detection must say *which* query (SPEC §5.8).
+
+    `role=` is 0.7 syntax while `hunt.handoff` is 0.6, so a 0.6-valid hunt would
+    pick up a new warning — the compatibility rule forbids that. It is an *info*
+    under the default profiles and a warning under `quality`, the same treatment
+    the telemetry-plane notice got in 0.6.
+    """
     issues: list[Issue] = []
     handoff = str(hunt_block(pb.meta).get("handoff") or "")
     queries = [s for s in pb.steps if s.kind == "query"]
     candidates = [s for s in queries if str(s.attrs.get("role") or "") == "detection-candidate"]
     if handoff == "promote-to-detection" and queries and not candidates:
         issues.append(
-            Issue("warn", "", "hunt.handoff is promote-to-detection but no query is marked role=detection-candidate — say which query gets promoted (SPEC §5.8)")
+            Issue(
+                "warn" if profile == "quality" else "info",
+                "",
+                "hunt.handoff is promote-to-detection but no query is marked role=detection-candidate — say which query gets promoted (SPEC §5.8)",
+            )
         )
     for s in queries:
         if s.portable and str(s.attrs.get("role") or "") != "detection-candidate":

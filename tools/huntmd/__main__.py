@@ -56,7 +56,7 @@ def _cmd_convert(args: argparse.Namespace) -> int:
         if is_md:
             target = args.to or "yaml"
             if target == "cacao":
-                result = json.dumps(markdown_to_cacao(text), indent=2) + "\n"
+                result = json.dumps(markdown_to_cacao(text), indent=2, default=str) + "\n"
             elif target == "misp":
                 run = None
                 if args.result:
@@ -68,9 +68,9 @@ def _cmd_convert(args: argparse.Namespace) -> int:
                         raise ConversionError(f"--result {rp}: not parseable as YAML/JSON ({exc.__class__.__name__})") from exc
                     if not is_result_document(run):
                         raise ConversionError(f"--result {rp} is not a run result (expected 'hunt_result' root)")
-                result = json.dumps(markdown_to_misp(text, result=run), indent=2, ensure_ascii=False) + "\n"
+                result = json.dumps(markdown_to_misp(text, result=run, date=args.date), indent=2, ensure_ascii=False, default=str) + "\n"
             elif target == "json":
-                result = json.dumps(markdown_to_definition(text), indent=2)
+                result = json.dumps(markdown_to_definition(text), indent=2, default=str)
             elif target == "yaml":
                 result = dump_yaml(markdown_to_definition(text), sort_keys=False, default_flow_style=False)
             else:

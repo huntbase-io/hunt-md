@@ -22,6 +22,7 @@ Exits non-zero on the first failing group, printing what differed.
 
 from __future__ import annotations
 
+import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -70,10 +71,14 @@ for path in hunts:
     try:
         markdown_to_definition(md)
         markdown_to_cacao(md)
+        # JSON-serializable export (dates/timestamps in parameters or frontmatter must not break json.dumps)
+        json.dumps(markdown_to_definition(md), default=str)
+        json.dumps(markdown_to_cacao(md), default=str)
+        json.dumps(markdown_to_misp(md), default=str)
         ok, detail = True, ""
     except Exception as exc:  # noqa: BLE001 - surface any conversion failure
         ok, detail = False, f"{type(exc).__name__}: {exc}"
-    report(f"{path.name} converts (definition + cacao)", ok, detail)
+    report(f"{path.name} converts (definition + cacao + misp JSON)", ok, detail)
 
 print("\nround-trip — md -> CACAO -> md must be exact")
 for path in hunts:
@@ -283,7 +288,7 @@ report(
     markdown_to_cacao(_unknown)["x_hunt"]["frontmatter"]["private_ext"] == "verbatim",
 )
 
-print("\nbackward compatibility — frozen 0.5 hunts lint with the same errors and warnings (CHANGELOG rule 1)")
+print("\nbackward compatibility — frozen hunts lint with the same errors and warnings (CHANGELOG rule 1)")
 # These are the repo hunts exactly as they were at 0.5. New tooling may add
 # info-level notes; it must not add or remove an error or a warning.
 _EXPECTED_05 = {
@@ -292,6 +297,16 @@ _EXPECTED_05 = {
     ("scattered-spider-identity-takeover-0.5.md", "format"): [],
     ("scattered-spider-identity-takeover-0.5.md", "huntbase"): [],
 }
+# The 0.6 repo hunts, frozen at the v0.6 tag. Same promise across 0.6 → 0.7.
+_EXPECTED_06 = {
+    ("kerberoasting-0.6.md", "format"): [],
+    ("kerberoasting-0.6.md", "huntbase"): ["route-by-verdict: switch: compiles to chained binary checkpoints on Huntbase"],
+    ("scattered-spider-identity-takeover-0.6.md", "format"): [],
+    ("scattered-spider-identity-takeover-0.6.md", "huntbase"): [],
+    ("adcs-esc1-certificate-abuse-0.6.md", "format"): [],
+    ("adcs-esc1-certificate-abuse-0.6.md", "huntbase"): ["route-by-verdict: switch: compiles to chained binary checkpoints on Huntbase"],
+}
+_EXPECTED_05.update(_EXPECTED_06)
 for (fname, prof), expected in _EXPECTED_05.items():
     fx = ROOT / "tools" / "tests" / "fixtures" / fname
     got = [f"{i.slug}: {i.message}" for i in validate_markdown(fx.read_text(encoding="utf-8"), profile=prof) if i.level in ("error", "warn")]
@@ -876,7 +891,8 @@ report("the portable fence attaches as a twin, not a redefinition", (_pf_step.po
 report("role parses from the info string", _pf_step.attrs.get("role") == "detection-candidate")
 report("well-formed role + portable lints clean", not [i for i in validate_markdown(_pf_ok, profile="format") if i.level in ("error", "warn")], str(validate_markdown(_pf_ok, profile="format")))
 report("an unflagged second fence still replaces the query (0.5 behaviour intact)", parse_markdown(_pf_ok.replace("```sigma portable", "```sigma")).steps[0].lang == "sigma")
-report("promote-to-detection with no detection-candidate warns", any("no query is marked role=detection-candidate" in i.message for i in validate_markdown(_pf.format(handoff="promote-to-detection", role="scoping", plang="sigma"), profile="format")))
+report("promote-to-detection with no detection-candidate is noted by default", any(i.level == "info" and "no query is marked role=detection-candidate" in i.message for i in validate_markdown(_pf.format(handoff="promote-to-detection", role="scoping", plang="sigma"), profile="format")))
+report("…and warns under --profile quality", any(i.level == "warn" and "no query is marked role=detection-candidate" in i.message for i in validate_markdown(_pf.format(handoff="promote-to-detection", role="scoping", plang="sigma"), profile="quality")))
 report("…and does not warn for another handoff", not any("detection-candidate" in i.message and i.level == "warn" for i in validate_markdown(_pf.format(handoff="retire", role="scoping", plang="sigma"), profile="format")))
 report("an off-vocabulary role warns", any("role 'vibes'" in i.message for i in validate_markdown(_pf.format(handoff="retire", role="vibes", plang="sigma"), profile="format")))
 report("a non-portable language in a portable block warns", any("not a portable detection format" in i.message for i in validate_markdown(_pf.format(handoff="retire", role="scoping", plang="kql"), profile="format")))
@@ -1034,6 +1050,16 @@ report(
 )
 _d1 = markdown_to_misp(_kb, date="2026-01-02")["Event"]["date"]
 report("--date pins the event date", _d1 == "2026-01-02")
+import contextlib, io  # noqa: E402
+from huntmd.__main__ import main as cli_main  # noqa: E402
+_cli_buf = io.StringIO()
+with contextlib.redirect_stdout(_cli_buf):
+    cli_main(["convert", str(hunts[0]), "--to", "misp", "--date", "2026-04-05"])
+report("CLI --date pins MISP event date", json.loads(_cli_buf.getvalue())["Event"]["date"] == "2026-04-05")
+_cli_cacao_buf = io.StringIO()
+with contextlib.redirect_stdout(_cli_cacao_buf):
+    cli_main(["convert", str(hunts[0]), "--to", "cacao"])
+report("CLI convert --to cacao succeeds as valid JSON", json.loads(_cli_cacao_buf.getvalue())["type"] == "playbook")
 report(
     "a hunt's own created: pins it without a flag",
     markdown_to_misp(_kb.replace("tlp: green", "created: 2026-03-04\ntlp: green"))["Event"]["date"] == "2026-03-04",

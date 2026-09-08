@@ -442,6 +442,7 @@ a generation pipeline, a curated library or a PR gate turns them on.
 | a query target that resolves to no telemetry plane (SPEC §6) | data requirements are not checkable (an info under the default profiles) |
 | no query declares `prevalence` or aggregates (SPEC §5.7) | a hunt that never asks "how common is this?" is a rule |
 | a volatile indicator list observed over a year ago (SPEC §3.7) | domains, IPs, URLs and hashes rot between campaigns |
+| `handoff: promote-to-detection` with no `detection-candidate` query (SPEC §5.8) | the hunt promised a promotion without saying what gets promoted |
 
 All warnings; the exit code is unaffected. The repository's own hunts pass it,
 and `tools/tests/check.py` keeps them passing.
