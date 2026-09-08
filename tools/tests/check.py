@@ -730,6 +730,49 @@ _pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")
 report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
 report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
 
+print("\nagent context budget + citation demand (SPEC §8.2)")
+_ac = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+  hunter: {{agent: true, name: Hunt agent}}
+---
+# t
+## q
+```kql target=siem
+x
+```
+## a
+```agent target=hunter
+objective: o
+context:
+  - {{step: {ref}, rows: {rows}}}
+  - q
+tools: [siem]
+cite: {cite}
+max_iterations: 4
+```
+→ end
+"""
+_ac_ok = _ac.format(ref="q", rows=200, cite="required")
+from huntmd.core import context_entries  # noqa: E402
+
+_ac_step = next(s for s in parse_markdown(_ac_ok).steps if s.kind == "agent")
+report("both context shapes parse and normalise", context_entries(_ac_step) == [{"step": "q", "rows": 200}, {"step": "q"}], str(context_entries(_ac_step)))
+report("well-formed context budget + cite lints clean", not [i for i in validate_markdown(_ac_ok, profile="format") if i.level in ("error", "warn")], str(validate_markdown(_ac_ok, profile="format")))
+report("a non-positive row budget warns", any("row budget" in i.message for i in validate_markdown(_ac.format(ref="q", rows=0, cite="required"), profile="format")))
+report("an off-vocabulary cite warns", any("cite 'maybe'" in i.message for i in validate_markdown(_ac.format(ref="q", rows=10, cite="maybe"), profile="format")))
+report("a budgeted context entry naming no such step warns", any(i.level == "warn" and "not a step in this hunt" in i.message for i in validate_markdown(_ac.format(ref="nope", rows=10, cite="required"), profile="format")))
+report("…while a bare dangling name is only noted (0.5 hunts lint unchanged)", [i.level for i in validate_markdown(_ac_ok.replace("  - q\n", "  - nope\n"), profile="format") if "not a step" in i.message] == ["info"])
+report("max_iterations below the context count still warns under quality", any("cannot finish" in i.message for i in validate_markdown(_ac_ok.replace("max_iterations: 4", "max_iterations: 1"), profile="quality")))
+report("context budget + cite reach the definition config", next(n for n in markdown_to_definition(_ac_ok)["nodes"] if n["id"] == "a")["config"]["context"][0] == {"step": "q", "rows": 200})
+_ac_rt = next(s for s in parse_markdown(cacao_to_markdown(markdown_to_cacao(_ac_ok))).steps if s.kind == "agent")
+report("context budget + cite survive md → CACAO → md", context_entries(_ac_rt)[0] == {"step": "q", "rows": 200} and _ac_rt.attrs.get("cite") == "required")
+_ac_def_rt = next(s for s in parse_markdown(definition_to_markdown(markdown_to_definition(_ac_ok))).steps if s.kind == "agent")
+report("…and md → definition → md", context_entries(_ac_def_rt)[0] == {"step": "q", "rows": 200} and _ac_def_rt.attrs.get("cite") == "required")
+
 print("\nrelated hunts + series (SPEC §3.8)")
 _sr = """---
 hypothesis: x

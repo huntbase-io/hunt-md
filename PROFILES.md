@@ -47,6 +47,7 @@ attachment (†) and the objects hold what HUNT-EX makes searchable.
 |---|---|---|---|---|---|
 | `query` step | ✍️ one fenced block | ✅ runs on connectors | 📦 `x-org-query` * | 📦 `threat-hunt-query` | 📄 rendered |
 | `collection` step | ✍️ ` ```collect ` | ✅ runs | 📦 command | † | 📄 |
+| agent `context` budget / `cite` (§8.2) | ✍️ `{step, rows}`, `cite:` | ✅ honours the budget | 📦 on the directive * | † | 📄 |
 | `agent` step | ✍️ ` ```agent ` | ✅ runs (an agent) | 📦 `x-org-agent-directive` * | † (summarised in `analysis`) | 📄 |
 | `decision` `if:` | ✍️ `if:` + `then/else` | ✅ | 📦 `if-condition` | † | 📄 |
 | `decision` `if~:` (fuzzy) | ✍️ `if~:` | ✅ agent-judged | 📦 `x-org-fuzzy-condition` * | † | 📄 |

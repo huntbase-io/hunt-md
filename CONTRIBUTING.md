@@ -35,7 +35,8 @@ against the format spec and a lint pass.
 - **Fuzzy conditions have `indeterminate:`** — an `if~:` MUST route indeterminate
   (recommended: to a human `task`).
 - **Agent steps are bounded** — every `agent` step has a `tools` allowlist and
-  `max_iterations`.
+  `max_iterations`. Cap a large `context` result with `{ step: …, rows: N }` and
+  state `cite: required` where the verdict must be evidenced (SPEC §8.2).
 - **Guardrails stay at their defaults** unless you have a reason — relaxing
   `telemetry`, `evidence`, `missing_data` or `claims` warns, and a reviewer will
   ask why (SPEC §8.1).

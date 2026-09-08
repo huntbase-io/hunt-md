@@ -296,7 +296,7 @@ def _declared_vars(s: Step, key: str) -> list[str]:
 _CACAO_NATIVE_ATTRS = {
     "query": {"target", "params", "description", "role"},
     "collection": {"target", "params", "description", "role"},
-    "agent": {"target", "params", "description", "objective", "tools", "success_criteria", "max_iterations", "context"},
+    "agent": {"target", "params", "description", "objective", "tools", "success_criteria", "max_iterations", "context", "cite"},
     "task": {"target", "params", "description"},
     "action": {"target", "params", "description", "approval"},
     "decision": {"target", "params", "description"},
@@ -343,6 +343,7 @@ def _commands(s: Step, params_as_vars: dict[str, str]) -> list[dict[str, Any]]:
             ("success_criteria", "success_criteria"),
             ("max_iterations", "max_iterations"),
             ("context", "context"),
+            ("cite", "cite"),
         ):
             if key in s.attrs:
                 cmd[out_key] = s.attrs[key]
@@ -780,7 +781,7 @@ def _import_step(  # noqa: C901 - one dispatch per CACAO step type
             step.portable = first["x_hunt_portable"]
     elif kind == "agent":
         step.attrs["objective"] = str(first.get("objective") or "")
-        for key in ("tools", "success_criteria", "max_iterations", "context"):
+        for key in ("tools", "success_criteria", "max_iterations", "context", "cite"):
             if key in first:
                 step.attrs[key] = first[key]
     elif kind in ("task", "action"):

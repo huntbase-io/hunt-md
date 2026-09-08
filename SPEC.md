@@ -777,7 +777,7 @@ max_iterations: 8
 ````
 
 `objective`, `tools` (a target-slug allowlist), `success_criteria`,
-`max_iterations`, `in`/`out`. The runtime binds `target=hunter` to whatever agent
+`max_iterations`, `in`/`out`, plus `context` and `cite` (§8.2). The runtime binds `target=hunter` to whatever agent
 it runs (see profiles). Output variables let downstream deterministic steps
 consume agent results exactly like query results (the hybrid hinge).
 
@@ -829,6 +829,41 @@ SHOULD say so rather than claim the property.
 
 ---
 
+### 8.2 Context budget and citation demand
+
+`context:` names the prior steps whose results the agent reads. A runtime has to
+decide *how much* of a large result to hand over, and today it guesses. An entry
+may therefore be an object with a row budget, and the step may state what it
+demands back:
+
+````markdown
+```agent target=hunter
+objective: …
+context:
+  - { step: analyze-ca-requests, rows: 200 }   # the big one: cap it
+  - enumerate-template-acls                    # small; hand it all over
+tools: [cadb, ad]
+cite: required
+max_iterations: 12
+```
+````
+
+Both entry forms are valid and may be mixed: a bare name means "all of it", an
+object caps it at `rows`. A truncating runtime MUST tell the agent that the
+result was truncated — a silently shortened result is telemetry the agent
+believes it examined in full, which is the §8.1 `missing_data` failure wearing a
+different hat.
+
+`cite: required | optional` makes the citation demand explicit at the step. It
+is redundant with the default `evidence: citation_required` guardrail (§8.1) and
+that is the point: a step may demand citations even in a document that relaxed
+the guardrail, and a reader sees the demand without resolving the guardrail
+chain.
+
+Lint: an unknown key in a context entry warns; a non-positive `rows` warns; an
+off-vocabulary `cite` warns; a context entry naming a step that does not exist
+warns when it carries a row budget (0.7 syntax) and is noted otherwise.
+
 ## 9. Tasks & actions
 - ` ```manual target=<role> ` → a `task` step (human instruction text).
 - ` ```action target=<slug> ` → an `action` step (a change/response). Actions
@@ -857,7 +892,7 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | document | `playbook { id, name, description, metadata }` |
 | `## slug` | `step { id, kind, slug, config, edges[] }` |
 | query block | `step.kind=query`, `config={query_language, query, params}` |
-| ` ```agent ` | `step.kind=agent`, `config={objective, tools, in, out, success_criteria, max_iterations}` |
+| ` ```agent ` | `step.kind=agent`, `config={objective, tools, context, cite, in, out, success_criteria, max_iterations}` (§8.2) |
 | `if/if~/switch/while` | `step.kind=decision|loop` |
 | ` ```manual ` / ` ```action ` | `step.kind=task | action` |
 | `→` / `then/else/indeterminate` | `edge { to, branch: on_true|on_false|default }` |

@@ -135,6 +135,11 @@ VOLATILE_INDICATOR_MEMBERS = ("domain", "ip", "ipv4", "ipv6", "url", "hash")
 INDICATOR_SOURCE_KINDS = ("stix-collection", "misp-event", "feed", "article", "advisory", "incident", "manual")
 _PARAM_LIST_TYPE = re.compile(r"^list\[([a-z0-9-]+)\]$", re.I)
 
+#: Whether an agent step must cite (SPEC §8.2). `required` is the default under
+#: the `evidence: citation_required` guardrail; the key makes it explicit and
+#: lets a step demand it even where the document relaxed the guardrail.
+CITE_VALUES = ("required", "optional")
+
 #: How one hunt relates to another (SPEC §3.8). hunt.md is one hypothesis per
 #: file; these are how a chain, an alternative, or a replacement is declared.
 RELATIONS = ("precedes", "follows", "sibling", "alternative", "supersedes", "superseded-by", "out-of-scope-alternative")
@@ -794,7 +799,7 @@ def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
 def _config_for(s: Step) -> dict[str, Any]:
     if s.kind == "agent":
         cfg = {"objective": s.attrs.get("objective", s.body).strip()}
-        for k in ("tools", "context", "success_criteria", "max_iterations", "in", "out"):
+        for k in ("tools", "context", "success_criteria", "max_iterations", "in", "out", "cite"):
             if k in s.attrs:
                 cfg[k] = s.attrs[k]
         return cfg
@@ -876,6 +881,7 @@ _NATIVE_ATTRS = {
     "context",
     "success_criteria",
     "max_iterations",
+    "cite",
     "approval",
     "in",
     "out",
@@ -951,7 +957,7 @@ def playbook_to_markdown(pb: Playbook) -> str:
             out += [f"```{lang}{info}", s.body.rstrip(), "```"]
             out += _portable_block(s)
         elif s.kind == "agent":
-            directive = {k: s.attrs[k] for k in ("objective", "context", "tools", "success_criteria", "max_iterations") if k in s.attrs}
+            directive = {k: s.attrs[k] for k in ("objective", "context", "tools", "success_criteria", "max_iterations", "cite") if k in s.attrs}
             directive.setdefault("objective", s.body.strip())
             out += [f"```agent{info}", _dump(directive, sort_keys=False, allow_unicode=True).strip(), "```"]
         elif s.kind in ("task", "action"):
@@ -1276,6 +1282,7 @@ def validate_markdown(
                 issues.append(Issue("warn", s.slug, "agent step has no tools allowlist"))
             if "max_iterations" not in s.attrs:
                 issues.append(Issue("warn", s.slug, "agent step has no max_iterations bound"))
+            issues += _check_agent_context(s, slugs)
         if s.kind == "decision" and s.fuzzy:
             has_indet = any(e.frm == s.slug and e.branch == "default" for e in pb.edges)
             if not has_indet:
@@ -1382,8 +1389,7 @@ def _quality_issues(pb: Playbook) -> list[Issue]:
             verb = _CONTAINMENT_VERB.search(s.body).group(0)
             issues.append(Issue("warn", s.slug, f"manual task says '{verb}' — a change to the estate should be a gated ```action``` step, not an instruction in prose"))
         if s.kind == "agent":
-            ctx = s.attrs.get("context")
-            n_ctx = len(ctx) if isinstance(ctx, list) else 0
+            n_ctx = len(context_entries(s))
             try:
                 bound = int(s.attrs.get("max_iterations"))
             except (TypeError, ValueError):
@@ -1612,6 +1618,32 @@ def _check_parameters(pb: Playbook) -> list[Issue]:
             issues.append(
                 Issue("warn", "", f"parameter '{name}' is a list of {member}s with no from: — these rot between campaigns; record where the list came from and when (SPEC §3.7)")
             )
+    return issues
+
+
+def _check_agent_context(s: Step, slugs: set[str]) -> list[Issue]:
+    """An agent step's `context:` entries and its citation demand (SPEC §8.2)."""
+    issues: list[Issue] = []
+    for entry in context_entries(s):
+        ref = str(entry.get("step") or entry.get("var") or "")
+        for key in entry:
+            if key not in ("step", "var", "rows"):
+                issues.append(Issue("warn", s.slug, f"context entry '{ref}': unknown key '{key}' (expected step, var, rows)"))
+        rows = entry.get("rows")
+        if rows is not None and (isinstance(rows, bool) or not isinstance(rows, int) or rows < 1):
+            issues.append(Issue("warn", s.slug, f"context entry '{ref}': rows '{rows}' should be a positive integer — it is a row budget, not a flag"))
+        if not ref:
+            issues.append(Issue("warn", s.slug, "a context entry names neither a step nor a var"))
+        elif not ref.startswith("$") and ref not in slugs:
+            # An entry carrying a row budget is unambiguously 0.7 syntax, so a
+            # dangling reference in it is new content and warns. A bare name
+            # predates this check, so a dangling one is only noted — it is
+            # almost always a typo, but it must not change how a 0.5 hunt lints.
+            level = "warn" if "rows" in entry else "info"
+            issues.append(Issue(level, s.slug, f"context names '{ref}', which is not a step in this hunt"))
+    cite = s.attrs.get("cite")
+    if cite is not None and str(cite) not in CITE_VALUES:
+        issues.append(Issue("warn", s.slug, f"cite '{cite}' not in {list(CITE_VALUES)}"))
     return issues
 
 
@@ -1932,22 +1964,37 @@ def _check_tlp(pb: Playbook, max_tlp: str) -> list[Issue]:
 def _runtime_vars(s: Step) -> list[str]:
     vals: list[str] = []
     for k in ("in", "out", "context"):
-        v = s.attrs.get(k)
-        if isinstance(v, list):
-            vals += [str(x) for x in v if str(x).startswith("$")]
+        vals += [x for x in _attr_list(s, k) if x.startswith("$")]
     return vals
 
 
 def _attr_list(step: Step, key: str) -> list[str]:
-    """A step attr that may be a list or a comma-string (`out=$a,$b`)."""
+    """A step attr that may be a list or a comma-string (`out=$a,$b`).
+
+    A `context:` entry may also be an object carrying a row budget (SPEC §8.2);
+    what every caller here wants from it is the step slug or variable it names.
+    """
     v = step.attrs.get(key)
     if v is None:
         return []
     if isinstance(v, str):
         return [t.strip() for t in v.split(",") if t.strip()]
     if isinstance(v, list):
-        return [str(x) for x in v]
+        return [str(x.get("step") or x.get("var") or "") if isinstance(x, dict) else str(x) for x in v]
     return [str(v)]
+
+
+def context_entries(step: Step) -> list[dict[str, Any]]:
+    """`context:` normalised to `[{step|var, rows?}, …]` (SPEC §8.2)."""
+    raw = step.attrs.get("context")
+    items = raw if isinstance(raw, list) else ([raw] if raw not in (None, "") else [])
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, dict):
+            out.append(dict(item))
+        elif str(item).strip():
+            out.append({"step": str(item).strip()})
+    return out
 
 
 def _out_vars(step: Step) -> set[str]:

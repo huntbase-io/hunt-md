@@ -144,7 +144,9 @@ else: → end
 ```agent target=hunter
 objective: >
   <What the agent should determine, and the scope.>
-context: [<first-query-step>]           # prior step slugs whose results to read
+context: [<first-query-step>]           # prior step slugs whose results to read;
+                                        # cap a big one: { step: <slug>, rows: 200 }  (SPEC §8.2)
+cite: required                          # demand a citation per claim (§8.2)
 tools: [siem]                           # target slugs the agent may use
 success_criteria: >
   <The observable output that means this step is done.>

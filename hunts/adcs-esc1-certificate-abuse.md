@@ -448,8 +448,14 @@ objective: >
   corroboration. Legitimate enrollment-agent and web-server enrollment will also
   show requester != subject — separate those out by template purpose and by
   whether the requester holds the Certificate Request Agent EKU.
-context: [analyze-ca-requests, enumerate-template-acls, query-machine-account-creation,
-          query-ca-audit-events, query-certificate-logons, query-kdc-cert-mapping]
+context:                                # SPEC §8.2 — cap the big result, hand the rest over whole
+  - { step: analyze-ca-requests, rows: 200 }
+  - enumerate-template-acls
+  - query-machine-account-creation
+  - query-ca-audit-events
+  - { step: query-certificate-logons, rows: 200 }
+  - query-kdc-cert-mapping
+cite: required
 tools: [cadb, ad, siem]
 success_criteria: >
   A single verdict of malicious | suspicious | benign for the run, plus a per-request
