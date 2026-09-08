@@ -48,6 +48,9 @@ against the format spec and a lint pass.
 - **Say what the hunt can see** — when the hunt comes from an intrusion report,
   `scenario:` + `coverage:` say per stage whether it is covered, not visible,
   or out of scope (SPEC §3.4).
+- **Say which query is the detection** — if `hunt.handoff` is
+  `promote-to-detection`, mark that query `role=detection-candidate` and
+  consider pairing a ` ```sigma portable ` twin so peers can run it (SPEC §5.8).
 - **Say what a query reads and what silence proves** — `reads:`, `verified:`,
   `expected:` and `silence:` on query steps (SPEC §5.5–§5.6); a hunt must not
   close on an empty result its own author marked as proving nothing.

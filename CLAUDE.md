@@ -69,6 +69,7 @@ Adding another interchange format means writing `X_to_playbook` / `playbook_to_X
 
 Key invariants when editing:
 
+- **A second fence in one section is a redefinition unless flagged `portable`.** `_parse_section` replaces the step's language/body on every fence, which is 0.5 behaviour and stays. A fence whose info-string carries the bare flag `portable` attaches as `step.portable` instead (SPEC §5.8). Bare info-string flags parse to `True`.
 - **Step kind is inferred, not declared.** A section's kind comes from its content — fenced block language (`agent`/`manual`/`action`/`collect` in `_BLOCK_LANG_KIND`, any other language ⇒ `query`) or an `if:`/`if~:`/`switch:`/`while:`/`run:`/`parallel:` clause. An explicit override is a heading suffix: `## triage [agent]`.
 - **Edges live on the target node.** The Huntbase definition puts edges in each node's `parents: [{id, branch, kind}]`, not as a separate edge list. `branch` maps `on_true|on_false|default` → `on_supports|on_refutes|default`.
 - **Three fidelity tiers (SPEC §2).** Tier 1 native Markdown, Tier 2 `~~~yaml` attribute blocks (parsed by `_extract_inner_yaml`), Tier 3 raw ` ```hunt-json `. A decompiler must prefer Tier 1, spill to Tier 2, fall back to Tier 3, and **never drop data** — preserve unknown keys through both directions.
@@ -86,6 +87,7 @@ Key invariants when editing:
 
 Format-level: edges resolve, queries have `target=`, `if~:` has an `indeterminate:` branch (error), agent steps have `tools` + `max_iterations` (warn), actions are `approval: required` (warn), reachability, severity ordinal, guardrail vocabulary (error) and relaxation (warn), numeric confidence (warn), `unavailable: → end` (error).
 Run results are a separate entry point: `results.py::validate_result`, reached by `validate` when the input has a `hunt_result` root.
+Format-level, 0.7: parameter types and indicator `from:` (§3.7), `prevalence`/`baseline` shape (§5.7), `role` vocab, portable-block language, `handoff: promote-to-detection` with no `detection-candidate` (§5.8).
 Format-level, 0.6: `hunt:` vocab (§3.3), `scenario`/`coverage` structure (§3.4 — stage without coverage and unresolved `covered` steps are errors), `blind_spots` ids and references (§3.5 — dangling reference is an error), query contract vocab and `verified: none` on `tlp: clear` (§5.5), `silence:` closes-on-silence (§5.6), target telemetry planes (§6), `provenance` shape (§3.6). All warn except where noted.
 Huntbase-profile-only: `while:` and `run:` are errors; `switch:` and `$var` dataflow are warnings naming the documented substitution. Keep profile-specific checks behind the `profile == "huntbase"` branch so `--profile format` stays neutral.
 MISP-profile-only (`misp.py::misp_issues`): info-level "moved" notices for legacy `misp:` classification keys, off-vocabulary legacy values, query language with no `hunt-ex:query-language` mapping, no target that maps to a telemetry plane, no ATT&CK label.

@@ -166,6 +166,7 @@ def passthrough_fingerprint(md: str) -> dict:
         "guardrails": _eg(pb.meta),
         # parallel/group are authoring sugar, not nodes (documented loss on the definition path)
         "attrs": {s.slug: {k: v for k, v in s.attrs.items() if k != "cacao_id"} for s in pb.steps if s.kind not in ("parallel", "group")},
+        "portable": {s.slug: s.portable for s in pb.steps if s.portable},
     })
 
 
@@ -527,7 +528,7 @@ report("--profile format ignores the misp: block", not any("vibes" in str(i) for
 report("legacy misp: classification keys get an info-level 'moved' notice", any(i.level == "info" and "moved to hunt.trigger" in i.message for i in validate_markdown(_badmisp, profile="misp")))
 
 print("\nhunt: block + telemetry planes (SPEC §3.1, §6)")
-_hb = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nhunt: {{trigger: {trig}, handoff: promote-to-detection, justification: 'PCI scope', assets: [cardholder-db], review_by: {rb}}}\ntargets:\n  siem: {{category: siem, name: SIEM{tele}}}\n---\n# t\n## q\n```kql target=siem\nx\n```\n→ end\n"
+_hb = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nhunt: {{trigger: {trig}, handoff: promote-to-detection, justification: 'PCI scope', assets: [cardholder-db], review_by: {rb}}}\ntargets:\n  siem: {{category: siem, name: SIEM{tele}}}\n---\n# t\n## q\n```kql target=siem role=detection-candidate\nx\n```\n→ end\n"
 _good_hb = _hb.format(trig="crown-jewel", rb="2027-01-01", tele=", telemetry: [identity]")
 report("well-formed hunt: block + declared telemetry lints clean", not [i for i in validate_markdown(_good_hb, profile="format") if i.level != "info"], str(validate_markdown(_good_hb, profile="format")))
 report("hunt.trigger off-vocabulary warns (never rejects)", any(i.level == "warn" and "hunt.trigger" in i.message for i in validate_markdown(_hb.format(trig="vibes", rb="2027-01-01", tele=", telemetry: [identity]"), profile="format")))
@@ -728,6 +729,58 @@ report("…and not when silence: was never written (0.5 hunts lint as before)", 
 _pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")["primitive_config"]
 report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
 report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
+
+print("\nquery role + paired portable form (SPEC §5.8)")
+_pf = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+hunt: {{handoff: {handoff}}}
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem role={role}
+Event | where EventID == 39
+```
+```{plang} portable
+title: Weak certificate mapping
+logsource: {{product: windows, service: system}}
+detection:
+  sel: {{EventID: 39}}
+  condition: sel
+```
+→ end
+"""
+_pf_ok = _pf.format(handoff="promote-to-detection", role="detection-candidate", plang="sigma")
+_pf_pb = parse_markdown(_pf_ok)
+_pf_step = _pf_pb.steps[0]
+report("the native fence still defines the step", _pf_step.lang == "kql" and _pf_step.target == "siem" and "EventID == 39" in _pf_step.body)
+report("the portable fence attaches as a twin, not a redefinition", (_pf_step.portable or {}).get("language") == "sigma" and "logsource" in (_pf_step.portable or {}).get("body", ""))
+report("role parses from the info string", _pf_step.attrs.get("role") == "detection-candidate")
+report("well-formed role + portable lints clean", not [i for i in validate_markdown(_pf_ok, profile="format") if i.level in ("error", "warn")], str(validate_markdown(_pf_ok, profile="format")))
+report("an unflagged second fence still replaces the query (0.5 behaviour intact)", parse_markdown(_pf_ok.replace("```sigma portable", "```sigma")).steps[0].lang == "sigma")
+report("promote-to-detection with no detection-candidate warns", any("no query is marked role=detection-candidate" in i.message for i in validate_markdown(_pf.format(handoff="promote-to-detection", role="scoping", plang="sigma"), profile="format")))
+report("…and does not warn for another handoff", not any("detection-candidate" in i.message and i.level == "warn" for i in validate_markdown(_pf.format(handoff="retire", role="scoping", plang="sigma"), profile="format")))
+report("an off-vocabulary role warns", any("role 'vibes'" in i.message for i in validate_markdown(_pf.format(handoff="retire", role="vibes", plang="sigma"), profile="format")))
+report("a non-portable language in a portable block warns", any("not a portable detection format" in i.message for i in validate_markdown(_pf.format(handoff="retire", role="scoping", plang="kql"), profile="format")))
+report("role + portable survive md → md", (parse_markdown(_p2m(_pf_pb)).steps[0].portable or {}).get("language") == "sigma" and parse_markdown(_p2m(_pf_pb)).steps[0].attrs.get("role") == "detection-candidate")
+report("role + portable survive md → CACAO → md", (parse_markdown(cacao_to_markdown(markdown_to_cacao(_pf_ok))).steps[0].portable or {}).get("language") == "sigma")
+_pf_pc = next(n for n in markdown_to_definition(_pf_ok)["nodes"] if n["id"] == "q")["primitive_config"]
+report("role + portable are named primitive_config keys", _pf_pc.get("role") == "detection-candidate" and _pf_pc.get("portable", {}).get("language") == "sigma")
+report("role + portable survive md → definition → md", (parse_markdown(definition_to_markdown(markdown_to_definition(_pf_ok))).steps[0].portable or {}).get("language") == "sigma")
+_pf_ev = markdown_to_misp(_pf_ok)["Event"]
+_pf_sigma = [o for o in _pf_ev["Object"] if o["name"] == "sigma"]
+_pf_q = next(o for o in _pf_ev["Object"] if o["name"] == "threat-hunt-query")
+report("the portable twin exports as MISP's own sigma object", len(_pf_sigma) == 1 and any(a["object_relation"] == "sigma" and "logsource" in a["value"] for a in _pf_sigma[0]["Attribute"]), [o["name"] for o in _pf_ev["Object"]])
+report("…linked derived-from the query and tests the hypothesis", _pf_sigma and {r["relationship_type"] for r in _pf_sigma[0]["ObjectReference"]} == {"derived-from", "tests"} and any(r["referenced_uuid"] == _pf_q["uuid"] for r in _pf_sigma[0]["ObjectReference"]))
+report("…and its rule name comes from the sigma title", _pf_sigma and any(a["object_relation"] == "sigma-rule-name" and a["value"] == "Weak certificate mapping" for a in _pf_sigma[0]["Attribute"]))
+report("md → MISP → md stays byte-exact with a portable twin", misp_to_markdown(json.loads(json.dumps(markdown_to_misp(_pf_ok)))) == _pf_ok)
+_pf_stripped = json.loads(json.dumps(markdown_to_misp(_pf_ok)))
+_pf_stripped["Event"]["Attribute"] = [a for a in _pf_stripped["Event"]["Attribute"] if a["type"] != "attachment"]
+_pf_draft = parse_markdown(misp_to_markdown(_pf_stripped))
+report("objects-only import restores the sigma object as the query's twin, not a separate step", len([s for s in _pf_draft.steps if s.kind == "query"]) == 1 and (_pf_draft.steps[0].portable or {}).get("language") == "sigma", [(s.slug, s.kind, bool(s.portable)) for s in _pf_draft.steps])
 
 print("\ntyped parameters + indicator provenance (SPEC §3.7)")
 _tp = """---

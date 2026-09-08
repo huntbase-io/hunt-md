@@ -97,7 +97,7 @@ AuditLogs
 ```
 
 ## query-rmm-installs
-```kql target=edr params=(days=lookback, tools=rmm_tools)
+```kql target=edr params=(days=lookback, tools=rmm_tools) role=detection-candidate
 ~~~yaml
 prevalence: { key: [FileName, AccountName], by: DeviceName, rare_below: 2 }
 baseline: { window: "{{days}}", compare: first_seen }   # RMM appearing for the first time on a user's host is the tell
@@ -108,6 +108,45 @@ DeviceProcessEvents
 | where InitiatingProcessAccountName !in ("it-deploy-svc")   // sanctioned deployer
 | summarize first_seen=min(Timestamp), hosts=make_set(DeviceName)
     by FileName, AccountName
+```
+```sigma portable
+title: Commercial RMM tool executed outside the sanctioned deployment path
+id: 0d3f8c41-77b2-4e59-8a6d-5c9e1f2a3b47
+status: experimental
+description: >
+  Scattered Spider-style actors install commercial remote-management tooling
+  for persistence because it is signed, allowlisted and indistinguishable from
+  IT activity. The tool list travels with the hunt (AA23-320A) and needs
+  refreshing; the sanctioned deployer must be tuned per environment.
+references:
+  - https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
+author: huntbase.io
+date: 2026/09/08
+tags:
+  - attack.command-and-control
+  - attack.t1219
+logsource:
+  category: process_creation
+  product: windows
+detection:
+  rmm:
+    Image|endswith:
+      - '\anydesk.exe'
+      - '\screenconnect.client.exe'
+      - '\teamviewer.exe'
+      - '\splashtop.exe'
+      - '\fleetdeck_agent.exe'
+      - '\level.exe'
+      - '\tailscaled.exe'
+      - '\ngrok.exe'
+      - '\pulseway.exe'
+  sanctioned:
+    ParentUser|contains: 'it-deploy-svc'
+  condition: rmm and not sanctioned
+falsepositives:
+  - Sanctioned IT deployment from a different service account than the one excluded
+  - A user who legitimately owns one of these tools for personal support work
+level: medium
 ```
 
 ## correlate-identities

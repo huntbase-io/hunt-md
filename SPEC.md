@@ -527,6 +527,58 @@ is still the ground truth. The Huntbase definition carries both as named
 warns when no query step declares `prevalence` or contains an aggregation — a
 hunt that never asks "how common is this?" is a rule.
 
+### 5.8 Query role and the paired portable form
+
+A hunt with several queries does not say which one *is* the detection. An
+optional `role=` in the info string does:
+
+| role | meaning |
+|---|---|
+| `scoping` | narrows the estate to where the hypothesis could hold |
+| `baseline` | establishes what normal looks like (usually with `prevalence`, §5.7) |
+| `enrichment` | adds context to candidates found elsewhere |
+| `triage` | separates candidates for a human or agent decision |
+| `detection-candidate` | the query worth promoting to a standing rule |
+
+A query that is worth promoting is usually worth *sharing*, and the native
+dialect is the part a peer cannot use. So a query step may carry a second fence
+flagged `portable`: the native block is what runs, the portable block is what
+travels.
+
+````markdown
+## kdc-weak-cert-mapping
+```kql target=siem role=detection-candidate
+Event | where Source == "Microsoft-Windows-Kerberos-Key-Distribution-Center" | where EventID in (39, 41)
+```
+```sigma portable
+title: Weak certificate mapping observed by the KDC
+logsource: { product: windows, service: system }
+detection:
+  kdc: { Provider_Name: 'Microsoft-Windows-Kerberos-Key-Distribution-Center', EventID: [39, 41] }
+  condition: kdc
+level: high
+```
+````
+
+The `portable` flag is what makes the second fence a twin rather than a
+redefinition — without it, a later fence still replaces the step's query, as it
+always did, so no existing document changes meaning. Portable languages:
+`sigma`, `yara`, `yara-l`, `stix`, `suricata`, `snort`.
+
+Lint: an off-vocabulary `role` warns; a portable block in a non-portable
+language, or an empty one, warns; `hunt.handoff: promote-to-detection` (§3.3)
+with no `detection-candidate` query warns, because the hunt has promised a
+promotion without saying what gets promoted; a portable block on a step that is
+not the detection candidate is an info note.
+
+Profiles: the definition and CACAO carry the twin verbatim
+(`primitive_config.portable`, `x_hunt_portable`). MISP emits it as its own
+standard `sigma`/`yara` object, linked `tests` → the hypothesis and
+`derived-from` → the `threat-hunt-query` — which is what upstream guidance asks
+for when detection logic is portable. On import, a `sigma`/`yara` object that
+names the query it came from is restored as that step's twin rather than a
+separate step.
+
 ## 6. Targets (data sources, agents, people)
 
 Declared once in frontmatter `targets:` and referenced by slug. A target is
@@ -771,6 +823,7 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | query `~~~yaml` `source/reads/verified/verified_at` | `step.config { source, reads[], verified, verified_at }` (§5.5) |
 | query `~~~yaml` `expected/silence` | `step.config { expected, silence }` (§5.6) |
 | query `~~~yaml` `prevalence/baseline` | `step.config { prevalence{key, by, rare_below}, baseline{window, compare} }` (§5.7) |
+| query `role=` / ` ```<lang> portable ` | `step.role`, `step.portable { language, body }` (§5.8) |
 | `unavailable: → x (blind_spot: id)` | `edge { branch: on_unavailable }` + `step.blind_spot` (§7.2) |
 | `targets.*.telemetry` | `targets[].telemetry[]` — declared or derived from category (§6) |
 | `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |

@@ -283,6 +283,12 @@ SILENCE = ("not_evidence_of_absence", "evidence_of_absence")
 #: compare move, declared so a runtime that can compute first-seen does, and one
 #: that cannot runs the query as written.
 BASELINE_COMPARE = ("prior_equal_window", "first_seen", "new_this_window")
+#: What a query step is *for* (SPEC §5.8). `detection-candidate` is the query a
+#: `handoff: promote-to-detection` hands over.
+QUERY_ROLES = ("detection-candidate", "scoping", "enrichment", "baseline", "triage")
+#: Languages a paired portable block may be written in (SPEC §5.8) — the formats
+#: a peer can run without owning your stack.
+PORTABLE_LANGUAGES = ("sigma", "yara", "yara-l", "stix", "suricata", "snort")
 _QUERY_CONTRACT_KEYS = ("source", "reads", "verified", "verified_at", "expected", "silence", "prevalence", "baseline")
 
 
@@ -303,6 +309,9 @@ class Step:
     judge: str | None = None
     # `unavailable: → end` closes a hunt on data it never examined (SPEC §7.2).
     # The edge itself vanishes (end is implicit), so the intent is recorded here.
+    #: A paired portable form of this step's query (SPEC §5.8): the native block
+    #: is what runs, this is what travels. ``{"language": …, "body": …}``.
+    portable: dict[str, Any] | None = None
     unavailable_to_end: bool = False
     else_to_end: bool = False  # `else: → end` written explicitly (lint only; end is implicit in the IR)
     # switch/parallel/subplaybook (kept for round-trip + linting)
@@ -362,6 +371,10 @@ def _parse_info_string(info: str) -> tuple[str, dict[str, Any]]:
         if "=" in tok:
             k, v = tok.split("=", 1)
             attrs[k.strip()] = v.strip()
+        elif tok.strip():
+            # A bare flag (`portable`, §5.8). Recorded as True so a flag is
+            # distinguishable from an absent key, and passes through Tier 2.
+            attrs[tok.strip()] = True
     return lang, attrs
 
 
@@ -446,6 +459,15 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
                 j += 1
             body = "\n".join(block)
             lang, attrs = _parse_info_string(info)
+            # A second fence flagged `portable` is the shareable twin of the
+            # step's own query (SPEC §5.8), not a redefinition of the step —
+            # without the flag a later fence still wins, as it always did.
+            if step.kind != "group" and "portable" in attrs:
+                inner_p, text_p = _extract_inner_yaml(body)
+                step.portable = {"language": lang, "body": text_p.strip(),
+                                 **{k: v for k, v in {**attrs, **inner_p}.items() if k != "portable"}}
+                i = j + 1
+                continue
             step.lang = lang
             step.target = attrs.get("target")
             step.params = attrs.get("params", {})
@@ -742,6 +764,10 @@ def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
             for key in _QUERY_CONTRACT_KEYS:
                 if key in s.attrs:
                     node["primitive_config"][key] = s.attrs[key]
+            if s.attrs.get("role"):
+                node["primitive_config"]["role"] = s.attrs["role"]
+            if s.portable:
+                node["primitive_config"]["portable"] = s.portable
             extra = _extra_attrs(s)
             if extra:
                 node["primitive_config"]["x_hunt_attrs"] = extra
@@ -847,6 +873,7 @@ _NATIVE_ATTRS = {
     "params",
     "track",
     "blind_spot",
+    "role",
 }
 
 
@@ -860,6 +887,8 @@ def _info_string(s: Step) -> str:
     bits = []
     if s.target:
         bits.append(f"target={s.target}")
+    if s.attrs.get("role"):
+        bits.append(f"role={s.attrs['role']}")
     if s.params:
         bits.append("params=(" + ", ".join(f"{k}={v}" for k, v in s.params.items()) + ")")
     for key in ("in", "out"):
@@ -868,6 +897,17 @@ def _info_string(s: Step) -> str:
             rendered = ",".join(str(v) for v in value) if isinstance(value, list) else str(value)
             bits.append(f"{key}={rendered}")
     return (" " + " ".join(bits)) if bits else ""
+
+
+def _portable_block(s: Step) -> list[str]:
+    """The paired portable fence (SPEC §5.8), if the step has one."""
+    if not isinstance(s.portable, dict) or not str(s.portable.get("body") or "").strip():
+        return []
+    extra = {k: v for k, v in s.portable.items() if k not in ("language", "body")}
+    lines = [f"```{s.portable.get('language') or 'sigma'} portable"]
+    if extra:
+        lines += ["~~~yaml", _dump(extra, sort_keys=False, allow_unicode=True).strip(), "~~~"]
+    return lines + [str(s.portable["body"]).rstrip(), "```"]
 
 
 def playbook_to_markdown(pb: Playbook) -> str:
@@ -899,6 +939,7 @@ def playbook_to_markdown(pb: Playbook) -> str:
         if s.kind in ("query", "collection"):
             lang = "collect" if s.kind == "collection" else (s.lang or "sql")
             out += [f"```{lang}{info}", s.body.rstrip(), "```"]
+            out += _portable_block(s)
         elif s.kind == "agent":
             directive = {k: s.attrs[k] for k in ("objective", "context", "tools", "success_criteria", "max_iterations") if k in s.attrs}
             directive.setdefault("objective", s.body.strip())
@@ -1123,7 +1164,12 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
         # step-level attribute block (SPEC §4.2).
         if ntype in ("query", "collection"):
             pc = node.get("primitive_config") or {}
+            portable = pc.get("portable")
+            if isinstance(portable, dict) and str(portable.get("body") or "").strip():
+                out += _portable_block(Step(slug=slug, kind=ntype, portable=portable))
             extra = {k: pc[k] for k in _QUERY_CONTRACT_KEYS if k in pc}
+            if pc.get("role"):
+                extra["role"] = pc["role"]
             extra.update(pc.get("x_hunt_attrs") or {} if isinstance(pc.get("x_hunt_attrs"), dict) else {})
         else:
             extra = cfg.get("x_hunt_attrs")
@@ -1194,6 +1240,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_silence(pb)
     issues += _check_narrative_and_provenance(pb)
     issues += _check_parameters(pb)
+    issues += _check_detection_promotion(pb)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1551,6 +1598,22 @@ def _check_parameters(pb: Playbook) -> list[Issue]:
     return issues
 
 
+def _check_detection_promotion(pb: Playbook) -> list[Issue]:
+    """A hunt that says it promotes to detection must say *which* query (SPEC §5.8)."""
+    issues: list[Issue] = []
+    handoff = str(hunt_block(pb.meta).get("handoff") or "")
+    queries = [s for s in pb.steps if s.kind == "query"]
+    candidates = [s for s in queries if str(s.attrs.get("role") or "") == "detection-candidate"]
+    if handoff == "promote-to-detection" and queries and not candidates:
+        issues.append(
+            Issue("warn", "", "hunt.handoff is promote-to-detection but no query is marked role=detection-candidate — say which query gets promoted (SPEC §5.8)")
+        )
+    for s in queries:
+        if s.portable and str(s.attrs.get("role") or "") != "detection-candidate":
+            issues.append(Issue("info", s.slug, "has a portable block but is not role=detection-candidate — mark it if this is the query to promote"))
+    return issues
+
+
 def _check_narrative_and_provenance(pb: Playbook) -> list[Issue]:
     """`rationale:` / `analysis:` are prose (SPEC §3.1); `provenance:` has a shape (§3.6)."""
     issues: list[Issue] = []
@@ -1621,6 +1684,15 @@ def _check_query_contract(pb: Playbook) -> list[Issue]:
             issues.append(Issue("warn", s.slug, f"silence '{silence}' not in {list(SILENCE)}"))
         if "expected" in s.attrs and not isinstance(s.attrs["expected"], str):
             issues.append(Issue("warn", s.slug, "expected: should be prose describing what a hit looks like"))
+        role = s.attrs.get("role")
+        if role is not None and str(role) not in QUERY_ROLES:
+            issues.append(Issue("warn", s.slug, f"role '{role}' not in {list(QUERY_ROLES)}"))
+        if isinstance(s.portable, dict):
+            plang = str(s.portable.get("language") or "")
+            if plang not in PORTABLE_LANGUAGES:
+                issues.append(Issue("warn", s.slug, f"portable block language '{plang}' is not a portable detection format {list(PORTABLE_LANGUAGES)}"))
+            if not str(s.portable.get("body") or "").strip():
+                issues.append(Issue("warn", s.slug, "portable block is empty"))
         prev = s.attrs.get("prevalence")
         if prev is not None:
             if not isinstance(prev, dict) or not prev.get("key"):

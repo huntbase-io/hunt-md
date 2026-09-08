@@ -65,6 +65,7 @@ attachment (†) and the objects hold what HUNT-EX makes searchable.
 | **hypothesis** | ✍️ frontmatter | ✅ first-class | 📦 `x-hunt` * | 📦 `threat-hunt-hypothesis` | 📄 |
 | **ATT&CK techniques** | ✍️ `labels:` | ✅ first-class | 📦 `x-hunt` * | 📦 `attack-id` on the hypothesis | 📄 |
 | **data requirements** | ✍️ derived from `targets:` | ✅ pre-launch check | 📦 `x-hunt` * | 📦 `data-source`/`tool` + `hunt-ex:telemetry` | 📄 |
+| paired portable rule (§5.8) | ✍️ ` ```sigma portable ` | 📦 `primitive_config.portable` | 📦 `x_hunt_portable` * | 📦 standard `sigma`/`yara` object, `derived-from` the query | 📄 |
 | **unknown keys / attrs** (§2) | ✍️ any frontmatter key, any `~~~yaml` attr | 📦 `x_hunt_frontmatter` / `x_hunt_attrs` | 📦 `x-hunt.frontmatter` / `x_hunt_attrs` * | † | 📄 |
 | **human review / diff** | ✅ plain-text PR | — | — | — | ✅ |
 
@@ -266,7 +267,8 @@ searchable objects and tags MISP wants, and the exact source alongside them.
 |---|---|
 | frontmatter `name`, H1 description, `targets:` (data sources + `product` bindings) | `threat-hunt-context` — `hunt-title`, `purpose`, `data-source`, `tool`, `methodology`, `status` |
 | `hypothesis:` + `attack.tXXXX` labels | `threat-hunt-hypothesis` — `hypothesis`, `attack-id`, `hypothesis-id: H1`, `analysis` (a one-line-per-step summary of the flow), `status` |
-| every `query` step | one `threat-hunt-query` — `query`, `query-language`, `data-source` (the target), `platform` (its binding), `comment` (params + description); linked `tests` → the hypothesis |
+| every `query` step | one `threat-hunt-query` — `query`, `query-language`, `data-source` (the target), `platform` (its binding), `comment` (role + params + description); linked `tests` → the hypothesis |
+| a paired ` ```<lang> portable ` block (SPEC §5.8) | MISP's own `sigma` / `yara` object — the rule, its title as `<lang>-rule-name`, a `context` naming the hunt.md step; linked `tests` → the hypothesis and `derived-from` → the query object |
 | a run result (SPEC §12), via `--result` | `threat-hunt-finding` — `outcome`, `conclusion` (disposition, per-step explanations, evidence summary, unexamined telemetry), `recommendation`; linked `concludes` → the hypothesis |
 | `tlp:` | `tlp:*` event tag (and MISP `distribution`) |
 | `severity:` | `threat_level_id` |
@@ -334,7 +336,8 @@ The output is a standard MISP event JSON (`{"Event": {…}}`) that `PyMISP`,
 `misp-import` or the REST API accept as-is. Identifiers are `uuid5`-derived from
 the playbook id (SPEC §10), so re-exporting an unchanged hunt is stable, and an
 event can be updated in place. Object templates are pinned to
-`threat-hunt-*` v1; the taxonomy vocabularies to `hunt-ex` v4.
+`threat-hunt-*` v1, `sigma` v2 and `yara` v9; the taxonomy vocabularies to
+`hunt-ex` v4.
 
 **Verified against a live MISP** (2.5.44 and, for 0.6, 2.5.45 via misp-docker) —
 [`tools/tests/e2e_misp.py`](./tools/tests/e2e_misp.py) pushes every repo hunt,
@@ -378,8 +381,9 @@ that surfaced, so you don't rediscover it:
 - if the event carries the `<slug>.hunt.md` attachment, returns that source
   **byte-exact** — `md → MISP → md` round-trips completely, control flow and all;
 - otherwise (an event authored by a peer, or with the attachment stripped) builds
-  a **draft**: one `query` step per `threat-hunt-query` (plus any `sigma`/`yara`
-  objects in the event), `hypothesis:` and `attack.*` labels from the hypothesis
+  a **draft**: one `query` step per `threat-hunt-query` (a `sigma`/`yara` object
+  linked `derived-from` a query becomes that step's portable twin, SPEC §5.8;
+  a standalone one becomes its own step), `hypothesis:` and `attack.*` labels from the hypothesis
   object, `tlp:` from the tag, targets from the queries' `data-source`s, and a
   `threat-hunt-finding` as a `manual` review step so a re-run is compared against
   what the peer found. HUNT-EX classification tags land in `hunt:`, telemetry

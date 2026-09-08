@@ -85,7 +85,9 @@ targets:
 <Short description of what this hunt does and how it flows.>
 
 ## <first-query-step>
-```<language> target=siem params=(days=lookback)
+# `role=` says what this query is for: scoping | baseline | enrichment | triage |
+# detection-candidate (the one worth promoting to a rule — SPEC §5.8).
+```<language> target=siem params=(days=lookback) role=scoping
 ~~~yaml
 # Optional, all of it (SPEC §5.5–§5.6). Say what the query reads so a runtime
 # can preflight it, whether it has ever run, what a hit looks like, and what an
@@ -101,6 +103,16 @@ silence: not_evidence_of_absence        # | evidence_of_absence
 ~~~
 <your query — reference parameters as {{days}}>
 ```
+# A `detection-candidate` query may carry a portable twin: the native block is
+# what runs, this is what a peer can run without your stack (SPEC §5.8).
+# ```sigma portable
+# title: <rule title>
+# logsource: { product: windows, service: system }
+# detection:
+#   sel: { EventID: 4769 }
+#   condition: sel
+# level: medium
+# ```
 
 ## <decision-step>
 if: `<first-query-step>.rows > 0`

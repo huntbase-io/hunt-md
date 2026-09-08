@@ -319,7 +319,7 @@ SecurityEvent
 ```
 
 ## query-kdc-cert-mapping
-```kql target=siem params=(days=lookback)
+```kql target=siem params=(days=lookback) role=detection-candidate
 // KB5014754 KDC events. In Compatibility mode the KDC logs rather than blocks a
 // weak mapping, which makes these the highest-signal, lowest-volume artefact of
 // certificate impersonation available: 39 = certificate valid but not strongly
@@ -330,6 +330,37 @@ Event
 | where Source == "Microsoft-Windows-Kerberos-Key-Distribution-Center"
 | where EventID in (39, 40, 41)
 | project TimeGenerated, Computer, EventID, RenderedDescription
+```
+```sigma portable
+title: Weak certificate mapping observed by the KDC
+id: 6f1a5b52-3d4c-4a7e-9c1f-2b8e7d0a4c11
+status: experimental
+description: >
+  A domain controller logged a certificate that authenticated a principal
+  without a strong mapping (KB5014754). In Compatibility mode the KDC logs
+  rather than blocks, which makes these the highest-signal, lowest-volume
+  artefact of certificate-based impersonation available.
+references:
+  - https://support.microsoft.com/topic/kb5014754-certificate-based-authentication-changes-on-windows-domain-controllers-ad2c23b0-15d8-4340-a468-4d4f3b188f16
+  - https://www.cisa.gov/news-events/cybersecurity-advisories/aa26-237a
+author: huntbase.io
+date: 2026/09/08
+tags:
+  - attack.privilege-escalation
+  - attack.t1649
+logsource:
+  product: windows
+  service: system
+detection:
+  kdc:
+    Provider_Name: 'Microsoft-Windows-Kerberos-Key-Distribution-Center'
+    EventID:
+      - 39
+      - 41
+  condition: kdc
+falsepositives:
+  - Certificates issued before the SID extension was enforced, during a migration window
+level: high
 ```
 
 ## analyze-ca-requests

@@ -74,6 +74,20 @@ _TEMPLATES = {
         "threat-hunting",
         "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
     ),
+    # Portable detection content (SPEC §5.8) rides in MISP's own standard
+    # objects, which is what upstream guidance asks for.
+    "sigma": (
+        "aa21a3cd-ab2c-442a-9999-a5e6626591ec",
+        "2",
+        "misc",
+        "An object describing a Sigma rule (or a Sigma rule name).",
+    ),
+    "yara": (
+        "b5acf82e-ecca-4868-82fe-9dbdf4d808c3",
+        "9",
+        "misc",
+        "An object describing a YARA rule (or a YARA rule name), its supported YARA version, and optional test-sample hashes. Test samples are true-positive by default; set false-positive=true when needed.",
+    ),
     "threat-hunt-finding": (
         "ce3ab17c-9ac5-47fb-bad5-48d368568437",
         "1",
@@ -379,6 +393,8 @@ def _query_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict:
     for product in _bindings(target):
         attrs.append(a("platform", product))
     notes = []
+    if s.attrs.get("role"):
+        notes.append(f"role: {s.attrs['role']}")
     if _step_description(s):
         notes.append(_step_description(s))
     if s.params:
@@ -386,6 +402,47 @@ def _query_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict:
     if notes:
         attrs.append(a("comment", "\n".join(notes), type_="comment"))
     return _object("threat-hunt-query", ns, f"query:{s.slug}", attrs, comment=f"hunt.md step `{s.slug}`")
+
+
+#: hunt.md portable language → (MISP object name, rule relation, name relation).
+_PORTABLE_OBJECT = {
+    "sigma": ("sigma", "sigma", "sigma-rule-name"),
+    "yara": ("yara", "yara", "yara-rule-name"),
+}
+
+
+def _portable_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict | None:
+    """A paired portable block (SPEC §5.8) as MISP's own sigma/yara object.
+
+    Upstream guidance is explicit: when the detection logic is portable, prefer
+    the standard object and link it to the hypothesis with ``tests``. So the
+    native query stays a ``threat-hunt-query`` and this travels beside it.
+    """
+    portable = s.portable if isinstance(s.portable, dict) else None
+    if not portable or not str(portable.get("body") or "").strip():
+        return None
+    mapping = _PORTABLE_OBJECT.get(str(portable.get("language") or "").lower())
+    if mapping is None:
+        return None
+    obj_name, rule_rel, name_rel = mapping
+    key = f"portable:{s.slug}"
+    a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, key, rel, val), **kw)  # noqa: E731
+    body = str(portable["body"]).rstrip("\n")
+    title = ""
+    for line in body.splitlines():
+        if line.strip().lower().startswith("title:"):
+            title = line.split(":", 1)[1].strip()
+            break
+    attrs = [a(rule_rel, body)]
+    if title:
+        attrs.append(a(name_rel, title))
+    context = f"Portable form of hunt.md step `{s.slug}`; the native {(s.lang or 'query').upper()} block is what ran."
+    attrs.append(a("context", context))
+    for ref in pb.meta.get("references") or []:
+        if isinstance(ref, dict) and ref.get("url"):
+            attrs.append(a("reference", str(ref["url"]), type_="link"))
+            break
+    return _object(obj_name, ns, key, attrs, comment=f"hunt.md step `{s.slug}` (portable)")
 
 
 def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, list[dict]]:
@@ -504,6 +561,11 @@ def playbook_to_misp(
         q = _query_object(pb, ns, s)
         _reference(q, ns, "tests", hypothesis["uuid"], comment="query tests hypothesis H1")
         objects.append(q)
+        portable = _portable_object(pb, ns, s)
+        if portable is not None:
+            _reference(portable, ns, "tests", hypothesis["uuid"], comment="portable rule tests hypothesis H1")
+            _reference(portable, ns, "derived-from", q["uuid"], comment=f"portable form of the {s.lang or 'native'} query")
+            objects.append(portable)
 
     result_tags: list[dict] = []
     if result:
@@ -703,12 +765,32 @@ def misp_to_playbook(defn: Any) -> Playbook:
         lang = _HUNT_EX_TO_LANG.get(ql, re.sub(r"[^a-z0-9-]", "", ql) or "text")
         hint = str(o.get("comment") or "").removeprefix("hunt.md step").strip(" `:") or f"query-{i}"
         add_query(hint, lang, _first(a, "query") or "TODO: query text", target_for(_first(a, "data-source"), _first(a, "platform")), _first(a, "comment"))
-    for o in by_name.get("sigma", []):
-        a = _obj_attrs(o)
-        add_query(_first(a, "sigma-rule-name") or "sigma-rule", "sigma", _first(a, "sigma") or "", target_for("SIEM", None), _first(a, "context"))
-    for o in by_name.get("yara", []):
-        a = _obj_attrs(o)
-        add_query(_first(a, "yara-rule-name") or "yara-rule", "yara", _first(a, "yara") or "", target_for("Endpoint", None), _first(a, "context"))
+    # A portable rule that says which query it came from is that query's twin
+    # (SPEC §5.8), not a separate step; one that stands alone becomes a step.
+    query_uuid_to_slug = {
+        str(o.get("uuid")): steps[i].slug
+        for i, o in enumerate(by_name.get("threat-hunt-query", []))
+        if i < len(steps) and o.get("uuid")
+    }
+    for name, rule_rel, name_rel, fallback_target in (
+        ("sigma", "sigma", "sigma-rule-name", "SIEM"),
+        ("yara", "yara", "yara-rule-name", "Endpoint"),
+    ):
+        for o in by_name.get(name, []):
+            a = _obj_attrs(o)
+            derived = next(
+                (str(r.get("referenced_uuid")) for r in o.get("ObjectReference") or []
+                 if r.get("relationship_type") == "derived-from" and str(r.get("referenced_uuid")) in query_uuid_to_slug),
+                None,
+            )
+            body = _first(a, rule_rel) or ""
+            if derived:
+                owner = next((s for s in steps if s.slug == query_uuid_to_slug[derived]), None)
+                if owner is not None:
+                    owner.portable = {"language": name, "body": body}
+                    owner.attrs.setdefault("role", "detection-candidate")
+                    continue
+            add_query(_first(a, name_rel) or f"{name}-rule", name, body, target_for(fallback_target, None), _first(a, "context"))
 
     if not steps:
         for ds in context.get("data-source") or ["source"]:

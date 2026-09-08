@@ -294,8 +294,8 @@ def _declared_vars(s: Step, key: str) -> list[str]:
 #: Step attributes each kind carries in native CACAO fields; the rest travel in
 #: ``x_hunt_attrs`` on the workflow step (SPEC §2: never drop data).
 _CACAO_NATIVE_ATTRS = {
-    "query": {"target", "params", "description"},
-    "collection": {"target", "params", "description"},
+    "query": {"target", "params", "description", "role"},
+    "collection": {"target", "params", "description", "role"},
     "agent": {"target", "params", "description", "objective", "tools", "success_criteria", "max_iterations", "context"},
     "task": {"target", "params", "description"},
     "action": {"target", "params", "description", "approval"},
@@ -324,6 +324,12 @@ def _commands(s: Step, params_as_vars: dict[str, str]) -> list[dict[str, Any]]:
         }
         if s.kind == "collection":
             cmd["collection"] = True
+        if s.attrs.get("role"):
+            cmd["x_hunt_role"] = str(s.attrs["role"])
+        if s.portable:
+            # The native block is what runs; the portable twin is what a peer
+            # can run without owning your stack (SPEC §5.8).
+            cmd["x_hunt_portable"] = s.portable
         if params_as_vars:
             cmd["parameters"] = params_as_vars
         return [cmd]
@@ -768,6 +774,10 @@ def _import_step(  # noqa: C901 - one dispatch per CACAO step type
         params = first.get("parameters")
         if isinstance(params, dict):
             step.params = {k: _clean_var(str(v)) for k, v in params.items()}
+        if first.get("x_hunt_role"):
+            step.attrs["role"] = str(first["x_hunt_role"])
+        if isinstance(first.get("x_hunt_portable"), dict):
+            step.portable = first["x_hunt_portable"]
     elif kind == "agent":
         step.attrs["objective"] = str(first.get("objective") or "")
         for key in ("tools", "success_criteria", "max_iterations", "context"):
