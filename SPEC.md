@@ -813,7 +813,18 @@ history belongs in a results store, not in frontmatter.
 ## 13. Linting (against a target profile)
 A hunt is linted for: flow reachability; variable def-before-use; every query has
 a `target`; every `if~:` has `indeterminate:`; every `agent` step has `tools` +
-bounds; destructive `action`s are gated; and — per the chosen profile —
-unsupported kinds/languages/dataflow reported as actionable warnings, not silent
-mis-compiles. Profiles (runtime, interchange, sharing) and what each one lints
-are enumerated in PROFILES.md.
+bounds; destructive `action`s are gated; closed vocabularies (§3.3, §3.4, §3.5,
+§5.5, §5.6, §6) — off-vocabulary warns, a dangling reference errors; and — per
+the chosen profile — unsupported kinds/languages/dataflow reported as
+actionable warnings, not silent mis-compiles. Profiles (runtime, interchange,
+sharing) and what each one lints are enumerated in PROFILES.md.
+
+Three severities: **error** (the hunt cannot mean what it says — a dangling
+edge, a benign close on unexamined data), **warn** (legal but conspicuous), and
+**info** (a deprecation or migration note). Only errors affect the exit code.
+
+An opt-in **`quality` profile** adds the rules that make a hunt more than a rule
+— indicator-list queries, converging fuzzy branches, containment verbs in prose,
+missing justification, dead ends with no recorded cost (PROFILES.md §5). It adds
+no errors and runs under no default profile, so adopting it is a choice, not an
+upgrade cost.

@@ -57,6 +57,14 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Lint every hunt against the quality profile (warnings allowed; check.py enforces on repo hunts)
+        run: |
+          for f in hunts/*.md; do
+            echo "::group::$f"
+            huntmd validate "$f" --profile quality || true
+            echo "::endgroup::"
+          done
+
       - name: Regression checks (conversion + exact CACAO and MISP round-trips)
         run: python tools/tests/check.py
 

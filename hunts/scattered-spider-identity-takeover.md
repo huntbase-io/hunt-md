@@ -25,6 +25,16 @@ hunt:                   # why this hunt exists and what happens after (SPEC §3.
     tenant compromise and ransomware at peer organisations; this hunt is the
     compensating control until helpdesk caller verification is redesigned.
   assets: [privileged identities, helpdesk process, M365 tenant]
+blind_spots:            # what each dead end costs (SPEC §3.5)
+  - id: federation-or-ir-channel-logs
+    requires: "Entra federation-change audit events and OfficeActivity mailbox/search telemetry for the window"
+    question: "whether a rogue identity provider was added, and whether the actor is reading the IR channel"
+    risk: >
+      Without federation audit, a rogue IdP persists through every password
+      and MFA reset; without collaboration-platform telemetry, containment is
+      coordinated in a channel the actor may be reading (AA23-320A). Either
+      gap turns a contained incident into a re-entry.
+    owner: identity-platform
 references:
   - name: CISA AA23-320A — Scattered Spider (updated 2025-07-29)
     url: https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
@@ -145,7 +155,7 @@ OfficeActivity
 if~: "taken together, the correlated evidence, federation changes, and IR-surveillance activity indicate an active identity takeover consistent with AA23-320A rather than benign IT activity" (confidence: high, judge=hunter)
 then: → contain
 indeterminate: → manual-review
-unavailable: → manual-review          # federation or IR-channel logs missing: escalate, never close
+unavailable: → manual-review (blind_spot: federation-or-ir-channel-logs)   # escalate, never close
 else: → close-with-notes
 
 ## contain

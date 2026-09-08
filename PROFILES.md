@@ -395,6 +395,30 @@ runtime profile.
 
 ---
 
+## 5. Quality profile (opt-in lint, no runtime)
+
+`huntmd validate --profile quality` runs every format-level check plus the
+rules that make a hunt more than a rule. None of them is a format error and
+none runs under the default profiles, so a 0.5 hunt lints exactly as it did;
+a generation pipeline, a curated library or a PR gate turns them on.
+
+| rule | why |
+|---|---|
+| a query is a literal indicator list (five or more literals in one `in (…)` and nothing that stacks or baselines) — and, if *every* query is, the hunt is | indicators rot; a list with a hypothesis attached is a rule |
+| an `if~:` whose branches all reach the same step | the judgement changes nothing |
+| a `manual` task whose prose says *isolate / disable / delete / quarantine / revoke / wipe / terminate / reset the…* | a change to the estate should be a gated ```` ```action ```` step |
+| an `agent` step whose `max_iterations` is below its `context` count | it cannot finish |
+| a `references` entry with no `url` | a reviewer cannot verify the logic |
+| no `hunt.justification` (SPEC §3.3) | a negative result is indefensible without it |
+| an `unavailable:` branch that names no `blind_spot` (SPEC §3.5) | the dead end has no recorded cost |
+| fewer than two `scenario` stages `covered` (SPEC §3.4) | a one-stage hunt is a rule |
+| `verified_at` older than 180 days (SPEC §5.5) | the verification claim is folklore |
+
+All warnings; the exit code is unaffected. The repository's own hunts pass it,
+and `tools/tests/check.py` keeps them passing.
+
+---
+
 ## Adding a profile
 A new runtime implements: (1) IR-kind → its step model, (2) target resolution,
 (3) parameter/variable handling, (4) a capability declaration for the matrix,

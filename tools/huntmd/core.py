@@ -1245,6 +1245,82 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
         from huntmd.misp import misp_issues  # noqa: PLC0415 - adapters import core, not vice versa
 
         issues.extend(Issue(lvl, slug, msg) for lvl, slug, msg in misp_issues(pb))
+    if profile == "quality":
+        issues += _quality_issues(pb)
+    return issues
+
+
+# --- quality profile (opt-in, SPEC §13) ---------------------------------------
+#
+# Rules that make a hunt more than a rule. None of them is a format error and
+# none runs under the default profiles; a generation pipeline or a curated
+# library turns them on with `--profile quality`.
+
+_QUOTED_LITERAL = re.compile(r"""(["'])(?:(?!\1).){2,}\1""")
+#: `x in ("a", "b", …)` / `x in~ (…)` / SQL `IN (…)` — the membership list itself.
+_MEMBERSHIP_LIST = re.compile(r"\b(?:in~?|IN)\s*\(([^()]*)\)", re.I)
+_AGGREGATION = re.compile(
+    r"\b(?:summarize|stats|group\s+by|count\(|dcount|distinct|make_set|min\(|max\(|first_seen|baseline|prevalence)\b", re.I
+)
+#: Imperatives that change the estate. Words that are commonly nouns in analyst
+#: prose ("the block", "a kill chain") are deliberately left out.
+_CONTAINMENT_VERB = re.compile(r"\b(?:isolate|disable|delete|quarantine|revoke|wipe|terminate|reset the|reset all)\b", re.I)
+_STALE_VERIFICATION_DAYS = 180
+_INDICATOR_LIST_MIN = 5
+
+
+def _looks_like_indicator_list(body: str) -> bool:
+    """A membership list of five or more literals, and nothing that stacks or
+    baselines — the shape of a rule that has been handed a hypothesis."""
+    if _AGGREGATION.search(body):
+        return False
+    return any(len(_QUOTED_LITERAL.findall(inner)) >= _INDICATOR_LIST_MIN for inner in _MEMBERSHIP_LIST.findall(body))
+
+
+def _quality_issues(pb: Playbook) -> list[Issue]:
+    issues: list[Issue] = []
+    queries = [s for s in pb.steps if s.kind == "query" and s.body.strip()]
+    indicator_only = [s for s in queries if _looks_like_indicator_list(s.body)]
+    for s in indicator_only:
+        issues.append(Issue("warn", s.slug, "query is a literal indicator list — parameterise the list (see typed list parameters) or add a prevalence/baseline step; indicators rot"))
+    if queries and len(indicator_only) == len(queries):
+        issues.append(Issue("warn", "", "every query is an indicator list — this is a rule with a hypothesis attached, not a hunt"))
+
+    for s in pb.steps:
+        if s.kind == "decision" and s.fuzzy:
+            targets = {e.to for e in pb.edges if e.frm == s.slug}
+            if len(targets) == 1 and not s.unavailable_to_end:
+                issues.append(Issue("warn", s.slug, f"every branch of this if~: reaches '{next(iter(targets))}' — the judgement changes nothing; drop it or route the branches differently"))
+        if s.kind == "task" and _CONTAINMENT_VERB.search(s.body):
+            verb = _CONTAINMENT_VERB.search(s.body).group(0)
+            issues.append(Issue("warn", s.slug, f"manual task says '{verb}' — a change to the estate should be a gated ```action``` step, not an instruction in prose"))
+        if s.kind == "agent":
+            ctx = s.attrs.get("context")
+            n_ctx = len(ctx) if isinstance(ctx, list) else 0
+            try:
+                bound = int(s.attrs.get("max_iterations"))
+            except (TypeError, ValueError):
+                bound = None
+            if bound is not None and n_ctx and bound < n_ctx:
+                issues.append(Issue("warn", s.slug, f"max_iterations {bound} is below the {n_ctx} context steps the agent must read — it cannot finish"))
+        if s.kind in ("query", "collection") and s.attrs.get("verified_at"):
+            try:
+                from datetime import date  # noqa: PLC0415
+
+                age = (date.today() - date.fromisoformat(str(s.attrs["verified_at"]))).days
+            except ValueError:
+                age = None
+            if age is not None and age > _STALE_VERIFICATION_DAYS:
+                issues.append(Issue("warn", s.slug, f"verified_at is {age} days old — re-run the query or the claim is folklore"))
+
+    for i, ref in enumerate(pb.meta.get("references") or []):
+        if isinstance(ref, dict) and not ref.get("url"):
+            issues.append(Issue("warn", "", f"references[{i}] '{ref.get('name', '?')}' has no url — a reviewer cannot verify the logic against it"))
+        elif not isinstance(ref, dict):
+            issues.append(Issue("warn", "", f"references[{i}] is a bare string — give it a name and a url"))
+
+    if not str(hunt_block(pb.meta).get("justification") or "").strip():
+        issues.append(Issue("warn", "", "no hunt.justification — say what the business is paying for, or a negative result is indefensible (SPEC §3.3)"))
     return issues
 
 

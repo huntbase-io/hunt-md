@@ -707,6 +707,63 @@ _pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")
 report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
 report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
 
+print("\nquality profile (opt-in, SPEC §13)")
+_ql = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+hunt: {{justification: because}}
+references: [{{name: blog{url}}}]
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+  hunter: {{agent: true, name: Hunt agent}}
+  tier2: {{role: analyst, name: Analyst}}
+---
+# t
+## q
+```kql target=siem
+{query}
+```
+## a
+```agent target=hunter
+objective: o
+tools: [siem]
+max_iterations: {iters}
+context: [q, q, q]
+```
+## j
+if~: "bad" (confidence: high, judge=hunter)
+then: → {then_}
+indeterminate: → review
+else: → review
+## review
+```manual target=tier2
+{task}
+```
+→ end
+## act
+```manual target=tier2
+look
+```
+→ end
+"""
+_ioc = 'SecurityEvent | where Computer in ("a-host", "b-host", "c-host", "d-host", "e-host")'
+_stack = "SecurityEvent | summarize c=count() by Computer"
+_ql_ok = _ql.format(url=", url: https://x", query=_stack, iters=6, then_="act", task="review it")
+report("a well-formed hunt is quiet under --profile quality", not [i for i in validate_markdown(_ql_ok, profile="quality") if i.level == "warn"], str(validate_markdown(_ql_ok, profile="quality")))
+_q_ioc = validate_markdown(_ql.format(url=", url: https://x", query=_ioc, iters=6, then_="act", task="review it"), profile="quality")
+report("an indicator-list query warns, and 'every query' warns when that is all there is", any("indicator list" in i.message and i.slug == "q" for i in _q_ioc) and any("every query is an indicator list" in i.message for i in _q_ioc))
+report("…and the default profile says nothing", not any("indicator" in i.message for i in validate_markdown(_ql.format(url=", url: https://x", query=_ioc, iters=6, then_="act", task="review it"), profile="format")))
+report("a fuzzy decision whose branches converge warns", any("changes nothing" in i.message for i in validate_markdown(_ql.format(url=", url: https://x", query=_stack, iters=6, then_="review", task="review it"), profile="quality")))
+report("a manual task with a containment verb warns", any("gated" in i.message and "isolate" in i.message for i in validate_markdown(_ql.format(url=", url: https://x", query=_stack, iters=6, then_="act", task="isolate the host"), profile="quality")))
+report("max_iterations below the context count warns", any("cannot finish" in i.message for i in validate_markdown(_ql.format(url=", url: https://x", query=_stack, iters=2, then_="act", task="review it"), profile="quality")))
+report("a reference without a url warns", any("has no url" in i.message for i in validate_markdown(_ql.format(url="", query=_stack, iters=6, then_="act", task="review it"), profile="quality")))
+report("a missing hunt.justification warns", any("no hunt.justification" in i.message for i in validate_markdown(_ql_ok.replace("hunt: {justification: because}\n", ""), profile="quality")))
+report("stale verified_at warns", any("days old" in i.message for i in validate_markdown(_ql_ok.replace("```kql target=siem\n", "```kql target=siem\n~~~yaml\nverified: executed\nverified_at: 2020-01-01\n~~~\n"), profile="quality")))
+for path in hunts:
+    _qi = [str(i) for i in validate_markdown(path.read_text(encoding="utf-8"), profile="quality") if i.level == "warn"]
+    report(f"{path.name} passes --profile quality", not _qi, "; ".join(_qi[:2]))
+
 print("\nrun results (SPEC §12)")
 from huntmd.results import validate_result  # noqa: E402
 

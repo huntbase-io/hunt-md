@@ -19,6 +19,7 @@ against the format spec and a lint pass.
    ```bash
    pip install ./tools
    huntmd validate hunts/my-hunt.md --profile format --max-tlp green
+   huntmd validate hunts/my-hunt.md --profile quality   # hunts in this repo must pass it
    python tools/tests/check.py
    ```
 
@@ -41,7 +42,15 @@ against the format spec and a lint pass.
 - **Confidence is ordinal** — `(confidence: high)`, not `>= 0.8`. A model's
   numeric confidence isn't calibrated between runs.
 - **"We couldn't look" never closes a hunt** — route `unavailable:` to a human or
-  a collection step, never to `end`.
+  a collection step, never to `end` — and name what the dead end costs:
+  `unavailable: → escalate (blind_spot: <id>)` with a `blind_spots:` entry
+  (SPEC §3.5).
+- **Say what the hunt can see** — when the hunt comes from an intrusion report,
+  `scenario:` + `coverage:` say per stage whether it is covered, not visible,
+  or out of scope (SPEC §3.4).
+- **Say what a query reads and what silence proves** — `reads:`, `verified:`,
+  `expected:` and `silence:` on query steps (SPEC §5.5–§5.6); a hunt must not
+  close on an empty result its own author marked as proving nothing.
 - **Destructive actions are gated** — any `action` that changes state
   (disable/isolate/block/…) sits behind `approval: required` or a preceding
   decision.
