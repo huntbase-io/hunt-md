@@ -729,6 +729,35 @@ _pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")
 report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
 report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
 
+print("\nprevalence + baseline (SPEC §5.7)")
+_pv7 = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem
+~~~yaml
+prevalence: {{key: {key}, by: host, rare_below: {rb}}}
+baseline: {{window: 14d, compare: {cmp}}}
+~~~
+x
+```
+→ end
+"""
+_pv7_ok = _pv7.format(key="[proc]", rb=3, cmp="first_seen")
+report("well-formed prevalence/baseline lints clean", not [i for i in validate_markdown(_pv7_ok, profile="format") if i.level != "info"], str(validate_markdown(_pv7_ok, profile="format")))
+report("baseline.compare off-vocabulary warns", any("baseline.compare" in i.message for i in validate_markdown(_pv7.format(key="[proc]", rb=3, cmp="vibes"), profile="format")))
+report("rare_below must be a positive integer", any("rare_below" in i.message for i in validate_markdown(_pv7.format(key="[proc]", rb=0, cmp="first_seen"), profile="format")))
+report("prevalence.key must be a list", any("prevalence.key" in i.message for i in validate_markdown(_pv7.format(key="proc", rb=3, cmp="first_seen"), profile="format")))
+_pc7 = next(n for n in markdown_to_definition(_pv7_ok)["nodes"] if n["id"] == "q")["primitive_config"]
+report("prevalence/baseline are named primitive_config keys", _pc7.get("prevalence", {}).get("rare_below") == 3 and _pc7.get("baseline", {}).get("compare") == "first_seen")
+report("prevalence survives md → CACAO → md", parse_markdown(cacao_to_markdown(markdown_to_cacao(_pv7_ok))).steps[0].attrs.get("prevalence", {}).get("by") == "host")
+report("a hunt with no prevalence step warns under --profile quality", any("no prevalence step" in i.message for i in validate_markdown(_pv7_ok.replace("prevalence: {key: [proc], by: host, rare_below: 3}\n", "").replace("baseline: {window: 14d, compare: first_seen}\n", ""), profile="quality")))
+
 print("\nquality profile (opt-in, SPEC §13)")
 _ql = """---
 hypothesis: x

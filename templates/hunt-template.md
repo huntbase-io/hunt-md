@@ -89,6 +89,8 @@ verified: none                          # none | dry-run | executed
 expected: >
   <What a hit looks like. Say if zero rows is the common case.>
 silence: not_evidence_of_absence        # | evidence_of_absence
+# prevalence: { key: [<field>], by: <dimension>, rare_below: 3 }          # SPEC §5.7
+# baseline:   { window: "{{days}}", compare: prior_equal_window }         # | first_seen | new_this_window
 ~~~
 <your query — reference parameters as {{days}}>
 ```

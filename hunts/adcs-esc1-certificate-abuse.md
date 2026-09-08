@@ -247,6 +247,10 @@ pack: adcs.certificate-templates
 
 ## query-machine-account-creation
 ```kql target=siem params=(days=lookback)
+~~~yaml
+prevalence: { key: [Creator], by: NewComputer, rare_below: 2 }   # one non-delegated creator, one new computer, is enough
+baseline: { window: "{{days}}", compare: new_this_window }
+~~~
 // AA26-237A chain step 1: default ms-DS-MachineAccountQuota (10) lets any
 // authenticated user create a computer account, which then becomes the ESC1
 // enrollee. A computer account created by a non-delegated, non-admin user — and

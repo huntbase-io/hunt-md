@@ -94,6 +94,10 @@ AuditLogs
 
 ## query-rmm-installs
 ```kql target=edr params=(days=lookback, tools=rmm_tools)
+~~~yaml
+prevalence: { key: [FileName, AccountName], by: DeviceName, rare_below: 2 }
+baseline: { window: "{{days}}", compare: first_seen }   # RMM appearing for the first time on a user's host is the tell
+~~~
 DeviceProcessEvents
 | where Timestamp > ago({{days}})
 | where FileName in~ (split("{{tools}}", ","))

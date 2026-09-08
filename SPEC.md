@@ -451,6 +451,41 @@ that says nothing is linted exactly as before.
 
 ---
 
+### 5.7 Prevalence and baseline — the stack-count-and-compare move
+
+The single most common hunting move — count a value across the fleet, flag the
+rare ones, compare to a prior window — has had no representation: it is written
+as an arbitrary `GROUP BY` and the runtime cannot help. Two optional Tier-2
+attributes declare the intent:
+
+````markdown
+```kql target=edr params=(days=lookback)
+~~~yaml
+prevalence:
+  key: [FolderPath, FileName]         # what is being counted
+  by: DeviceName                      # the distinct-count dimension
+  rare_below: 3                       # flag values seen on fewer than N hosts
+baseline:
+  window: "{{days}}"                  # the period the comparison spans
+  compare: prior_equal_window         # prior_equal_window | first_seen | new_this_window
+~~~
+DeviceProcessEvents | summarize hosts=dcount(DeviceName) by FolderPath, FileName
+```
+````
+
+| `baseline.compare` | meaning |
+|---|---|
+| `prior_equal_window` | the same key over the preceding window of equal length; what is new or grew |
+| `first_seen` | the key's earliest occurrence in the source; what appeared during the window |
+| `new_this_window` | keys absent from all earlier data; a stricter first-seen |
+
+A runtime that can compute first-seen or a prior-window comparison natively does
+so from the declaration; one that cannot runs the query as written — the query
+is still the ground truth. The Huntbase definition carries both as named
+`primitive_config` keys. Lint: shape only (warn). The `quality` profile (§13)
+warns when no query step declares `prevalence` or contains an aggregation — a
+hunt that never asks "how common is this?" is a rule.
+
 ## 6. Targets (data sources, agents, people)
 
 Declared once in frontmatter `targets:` and referenced by slug. A target is
@@ -694,6 +729,7 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `blind_spots:` | `blind_spots[] { id, stage, requires, question, risk, owner, remediation }` (§3.5) |
 | query `~~~yaml` `source/reads/verified/verified_at` | `step.config { source, reads[], verified, verified_at }` (§5.5) |
 | query `~~~yaml` `expected/silence` | `step.config { expected, silence }` (§5.6) |
+| query `~~~yaml` `prevalence/baseline` | `step.config { prevalence{key, by, rare_below}, baseline{window, compare} }` (§5.7) |
 | `unavailable: → x (blind_spot: id)` | `edge { branch: on_unavailable }` + `step.blind_spot` (§7.2) |
 | `targets.*.telemetry` | `targets[].telemetry[]` — declared or derived from category (§6) |
 | `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |

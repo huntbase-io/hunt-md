@@ -37,6 +37,10 @@ an agent triages burst-vs-legitimate, and the verdict routes response.
 
 ## enumerate-spn-requests
 ```kql target=siem params=(days=lookback)
+~~~yaml
+prevalence: { key: [Account], by: IpAddress, rare_below: 3 }   # an account roasted from many sources is the signal
+baseline: { window: "{{days}}", compare: prior_equal_window }
+~~~
 SecurityEvent
 | where TimeGenerated > ago({{days}})
 | where EventID == 4769 and TicketEncryptionType == "0x17"

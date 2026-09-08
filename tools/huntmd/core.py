@@ -262,7 +262,11 @@ class Edge:
 #: Query-step verification contract (SPEC §5.5) and silence semantics (§5.6).
 VERIFIED = ("none", "dry-run", "executed")
 SILENCE = ("not_evidence_of_absence", "evidence_of_absence")
-_QUERY_CONTRACT_KEYS = ("source", "reads", "verified", "verified_at", "expected", "silence")
+#: Prevalence / baseline intent on a query step (SPEC §5.7): the stack-count-and-
+#: compare move, declared so a runtime that can compute first-seen does, and one
+#: that cannot runs the query as written.
+BASELINE_COMPARE = ("prior_equal_window", "first_seen", "new_this_window")
+_QUERY_CONTRACT_KEYS = ("source", "reads", "verified", "verified_at", "expected", "silence", "prevalence", "baseline")
 
 
 @dataclass
@@ -1321,6 +1325,8 @@ def _quality_issues(pb: Playbook) -> list[Issue]:
 
     if not str(hunt_block(pb.meta).get("justification") or "").strip():
         issues.append(Issue("warn", "", "no hunt.justification — say what the business is paying for, or a negative result is indefensible (SPEC §3.3)"))
+    if queries and not any(isinstance(s.attrs.get("prevalence"), dict) or _AGGREGATION.search(s.body) for s in queries):
+        issues.append(Issue("warn", "", "no prevalence step — nothing stack-counts a value across the fleet or compares to a prior window (SPEC §5.7); a hunt that never asks 'how common is this?' is a rule"))
     return issues
 
 
@@ -1534,6 +1540,26 @@ def _check_query_contract(pb: Playbook) -> list[Issue]:
             issues.append(Issue("warn", s.slug, f"silence '{silence}' not in {list(SILENCE)}"))
         if "expected" in s.attrs and not isinstance(s.attrs["expected"], str):
             issues.append(Issue("warn", s.slug, "expected: should be prose describing what a hit looks like"))
+        prev = s.attrs.get("prevalence")
+        if prev is not None:
+            if not isinstance(prev, dict) or not prev.get("key"):
+                issues.append(Issue("warn", s.slug, "prevalence: should be {key: [fields], by: <dimension>, rare_below: N}"))
+            else:
+                if not isinstance(prev.get("key"), list):
+                    issues.append(Issue("warn", s.slug, "prevalence.key should be a list of the fields being counted"))
+                rb = prev.get("rare_below")
+                if rb is not None and (isinstance(rb, bool) or not isinstance(rb, int) or rb < 1):
+                    issues.append(Issue("warn", s.slug, f"prevalence.rare_below '{rb}' should be a positive integer (flag values seen on fewer than N)"))
+        base = s.attrs.get("baseline")
+        if base is not None:
+            if not isinstance(base, dict):
+                issues.append(Issue("warn", s.slug, "baseline: should be {window: <duration>, compare: <mode>}"))
+            else:
+                cmp_ = base.get("compare")
+                if cmp_ is not None and str(cmp_) not in BASELINE_COMPARE:
+                    issues.append(Issue("warn", s.slug, f"baseline.compare '{cmp_}' not in {list(BASELINE_COMPARE)}"))
+                if not base.get("window"):
+                    issues.append(Issue("warn", s.slug, "baseline: has no window — say what period the comparison spans"))
     return issues
 
 
