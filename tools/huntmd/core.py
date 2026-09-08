@@ -118,6 +118,23 @@ _HUNTBASE_DSLS = {tag for tag, _, hb in LANGUAGES if hb}
 _KNOWN_DSLS = {tag for tag, _, _ in LANGUAGES}
 
 
+#: Parameter types (SPEC §3.7). Scalars, plus typed indicator lists whose
+#: members a runtime can validate and refresh.
+PARAMETER_SCALAR_TYPES = (
+    "string", "number", "integer", "boolean", "duration", "date", "host", "hostname",
+    "ip", "ipv4", "ipv6", "url", "uri", "domain", "hash", "email", "query", "path", "user",
+)
+#: `list[<member>]` — the member type must be one a runtime can check.
+PARAMETER_LIST_MEMBERS = ("domain", "ip", "ipv4", "ipv6", "hash", "url", "host", "hostname", "email", "path", "user", "string")
+#: The member types that rot: an adversary changes these between campaigns, so a
+#: list of them needs provenance and goes stale. A list of tool file names or
+#: usernames ages far more slowly and is not held to the same rule.
+VOLATILE_INDICATOR_MEMBERS = ("domain", "ip", "ipv4", "ipv6", "url", "hash")
+#: Where an indicator list came from, so a runtime can refresh it and a reader
+#: knows its age.
+INDICATOR_SOURCE_KINDS = ("stix-collection", "misp-event", "feed", "article", "advisory", "incident", "manual")
+_PARAM_LIST_TYPE = re.compile(r"^list\[([a-z0-9-]+)\]$", re.I)
+
 #: Provenance (SPEC §3.6): who wrote it, where it came from, whether a machine drafted it.
 PROVENANCE_SOURCE_SYSTEMS = ("misp", "cacao", "huntbase", "url", "other")
 PROVENANCE_GATES = ("dry-run", "lint", "critic", "executed", "human-review")
@@ -1176,6 +1193,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_query_contract(pb)
     issues += _check_silence(pb)
     issues += _check_narrative_and_provenance(pb)
+    issues += _check_parameters(pb)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1270,6 +1288,7 @@ _AGGREGATION = re.compile(
 #: prose ("the block", "a kill chain") are deliberately left out.
 _CONTAINMENT_VERB = re.compile(r"\b(?:isolate|disable|delete|quarantine|revoke|wipe|terminate|reset the|reset all)\b", re.I)
 _STALE_VERIFICATION_DAYS = 180
+_STALE_INDICATORS_DAYS = 365
 _INDICATOR_LIST_MIN = 5
 
 
@@ -1325,6 +1344,18 @@ def _quality_issues(pb: Playbook) -> list[Issue]:
 
     if not str(hunt_block(pb.meta).get("justification") or "").strip():
         issues.append(Issue("warn", "", "no hunt.justification — say what the business is paying for, or a negative result is indefensible (SPEC §3.3)"))
+    for name, spec in (pb.meta.get("parameters") or {}).items():
+        member = parameter_list_member(spec)
+        observed = (spec.get("from") or {}).get("observed") if isinstance(spec, dict) and isinstance(spec.get("from"), dict) else None
+        if member in VOLATILE_INDICATOR_MEMBERS and observed:
+            try:
+                from datetime import date  # noqa: PLC0415
+
+                age = (date.today() - date.fromisoformat(str(observed))).days
+            except ValueError:
+                age = None
+            if age is not None and age > _STALE_INDICATORS_DAYS:
+                issues.append(Issue("warn", "", f"parameter '{name}': indicators observed {age} days ago — refresh the list from {(spec.get('from') or {}).get('kind')} or drop them"))
     if queries and not any(isinstance(s.attrs.get("prevalence"), dict) or _AGGREGATION.search(s.body) for s in queries):
         issues.append(Issue("warn", "", "no prevalence step — nothing stack-counts a value across the fleet or compares to a prior window (SPEC §5.7); a hunt that never asks 'how common is this?' is a rule"))
     return issues
@@ -1467,6 +1498,56 @@ def _check_blind_spots(pb: Playbook, profile: str) -> list[Issue]:
             routes_unavailable = s.unavailable_to_end or any(e.frm == s.slug and e.branch == "on_unavailable" for e in pb.edges)
             if routes_unavailable:
                 issues.append(Issue("warn", s.slug, "unavailable: branch with no (blind_spot: …) — the dead end has no recorded cost"))
+    return issues
+
+
+def parameter_list_member(spec: Any) -> str | None:
+    """The member type of a `list[...]` parameter, else None (SPEC §3.7)."""
+    if not isinstance(spec, dict):
+        return None
+    m = _PARAM_LIST_TYPE.match(str(spec.get("type") or ""))
+    return m.group(1).lower() if m else None
+
+
+def _check_parameters(pb: Playbook) -> list[Issue]:
+    """Parameter types and indicator provenance (SPEC §3.7)."""
+    issues: list[Issue] = []
+    params = pb.meta.get("parameters")
+    if params is None:
+        return issues
+    if not isinstance(params, dict):
+        return [Issue("error", "", "parameters: must be a mapping of name → {type, default, …}")]
+    for name, spec in params.items():
+        if not isinstance(spec, dict):
+            issues.append(Issue("warn", "", f"parameter '{name}' should be a mapping {{type, default?, description?}}"))
+            continue
+        declared = str(spec.get("type") or "")
+        member = parameter_list_member(spec)
+        if not declared:
+            issues.append(Issue("warn", "", f"parameter '{name}' has no type: — a runtime cannot collect or validate it"))
+        elif member is not None:
+            if member not in PARAMETER_LIST_MEMBERS:
+                issues.append(Issue("warn", "", f"parameter '{name}': list member type '{member}' not in {list(PARAMETER_LIST_MEMBERS)}"))
+            default = spec.get("default")
+            if default is not None and not isinstance(default, list):
+                issues.append(Issue("warn", "", f"parameter '{name}' is a list type but its default is not a list"))
+        elif declared.lower() not in PARAMETER_SCALAR_TYPES:
+            issues.append(Issue("warn", "", f"parameter '{name}': type '{declared}' is not a known type {list(PARAMETER_SCALAR_TYPES)} or list[…] (kept verbatim)"))
+        src = spec.get("from")
+        if src is not None:
+            if not isinstance(src, dict):
+                issues.append(Issue("warn", "", f"parameter '{name}': from: should be {{kind, ref, observed}}"))
+            else:
+                if str(src.get("kind") or "") not in INDICATOR_SOURCE_KINDS:
+                    issues.append(Issue("warn", "", f"parameter '{name}': from.kind '{src.get('kind')}' not in {list(INDICATOR_SOURCE_KINDS)}"))
+                if not src.get("ref"):
+                    issues.append(Issue("warn", "", f"parameter '{name}': from: has no ref (collection id, event uuid, feed name or URL)"))
+                if src.get("observed") and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(src["observed"])):
+                    issues.append(Issue("warn", "", f"parameter '{name}': from.observed '{src['observed']}' is not an ISO date"))
+        elif member in VOLATILE_INDICATOR_MEMBERS:
+            issues.append(
+                Issue("warn", "", f"parameter '{name}' is a list of {member}s with no from: — these rot between campaigns; record where the list came from and when (SPEC §3.7)")
+            )
     return issues
 
 

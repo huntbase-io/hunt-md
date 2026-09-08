@@ -267,6 +267,47 @@ Prefer the ordinal words `critical | high | medium | low`. A numeric `severity`
 
 ---
 
+### 3.7 Typed parameters and indicator provenance
+
+A `parameters:` entry declares a launch-time input (§5.2). Its `type` is what a
+runtime uses to collect and validate the value:
+
+- **scalars** — `string`, `number`, `integer`, `boolean`, `duration`, `date`,
+  `host`/`hostname`, `ip`/`ipv4`/`ipv6`, `domain`, `url`/`uri`, `hash`, `email`,
+  `path`, `user`, `query`;
+- **typed lists** — `list[<member>]` where the member is one of `domain`, `ip`,
+  `ipv4`, `ipv6`, `hash`, `url`, `host`/`hostname`, `email`, `path`, `user`,
+  `string`.
+
+Indicator lists rot. A hunt that embeds them in the query text becomes a rule;
+one that parameterises them loses track of where they came from. An optional
+`from:` records that, so a runtime can refresh the list and a reader can see its
+age:
+
+```yaml
+parameters:
+  c2_domains:
+    type: list[domain]
+    default: ["tunnel.example.us.ngrok.example", "cdn.example.invalid"]
+    from:
+      kind: article        # stix-collection | misp-event | feed | article | advisory | incident | manual
+      ref: https://…       # collection id, event uuid, feed name or URL
+      observed: 2026-05-11
+```
+
+**Substitution.** A list parameter substitutes as its members joined by `,`, so
+a query written against the portable placeholder keeps working
+(`where name in~ (split("{{c2_domains}}", ","))`). A runtime MAY offer a native
+list binding as well; the comma form is the contract every profile supports.
+
+Lint: an unknown scalar type or list member warns (the value is kept); a
+malformed `from:` warns. `from:` is *expected* on the member types that rot
+between campaigns — `domain`, `ip`, `ipv4`, `ipv6`, `url`, `hash` — and a list
+of those without it warns; a list of tool paths, hostnames or usernames ages far
+more slowly and is not held to the same rule (recording `from:` on one is still
+good practice). The `quality` profile (§13) warns when a volatile list's
+`from.observed` is more than a year old.
+
 ## 4. Steps and step kinds
 
 Each `##` heading is one step; the heading text is its **slug** (stable
@@ -719,7 +760,7 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | ` ```manual ` / ` ```action ` | `step.kind=task | action` |
 | `→` / `then/else/indeterminate` | `edge { to, branch: on_true|on_false|default }` |
 | `parallel/join` | parallel edges + a merge edge |
-| `parameters:` | `parameters[] { name, type, default? }` |
+| `parameters:` | `parameters[] { name, type, default?, from? }` (§3.7) |
 | `targets:` | `targets[] { slug, category|agent|role, bindings{} }` |
 | `labels: attack.*` | `attack_techniques[]` |
 | `rationale:` / `analysis:` | `playbook.rationale`, `playbook.analysis` — prose on the hypothesis (§3.1) |

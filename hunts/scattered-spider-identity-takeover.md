@@ -40,7 +40,11 @@ references:
     url: https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
 parameters:
   lookback:  { type: duration, default: "10d" }
-  rmm_tools: { type: string,   default: "anydesk.exe,screenconnect.client.exe,teamviewer.exe,splashtop.exe,fleetdeck_agent.exe,level.exe,tailscaled.exe,ngrok.exe,pulseway.exe" }
+  rmm_tools:                  # SPEC §3.7: typed list + where it came from, so it can be refreshed
+    type: list[path]
+    default: [anydesk.exe, screenconnect.client.exe, teamviewer.exe, splashtop.exe,
+              fleetdeck_agent.exe, level.exe, tailscaled.exe, ngrok.exe, pulseway.exe]
+    from: { kind: advisory, ref: AA23-320A, observed: 2025-07-29 }
 targets:
   # Abstract categories keep the hunt portable; the optional per-runtime binding
   # hint pins a concrete source when running on that platform.

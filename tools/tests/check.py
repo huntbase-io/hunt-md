@@ -729,6 +729,42 @@ _pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")
 report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
 report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
 
+print("\ntyped parameters + indicator provenance (SPEC §3.7)")
+_tp = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+parameters:
+  lookback: {{type: duration, default: 7d}}
+  c2:
+    type: {ptype}
+    default: {default}
+{from_}targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem params=(days=lookback, list=c2)
+x {{{{days}}}} {{{{list}}}}
+```
+→ end
+"""
+_from_ok = "    from: {kind: article, ref: 'https://x', observed: 2026-05-11}\n"
+_tp_ok = _tp.format(ptype="list[domain]", default='["a.example"]', from_=_from_ok)
+report("typed indicator list with provenance lints clean", not [i for i in validate_markdown(_tp_ok, profile="format") if i.level != "info"], str(validate_markdown(_tp_ok, profile="format")))
+report("an indicator list with no from: warns", any("no from:" in i.message for i in validate_markdown(_tp.format(ptype="list[domain]", default='["a.example"]', from_=""), profile="format")))
+report("an unknown list member type warns", any("list member type 'ipv7'" in i.message for i in validate_markdown(_tp.format(ptype="list[ipv7]", default='["a"]', from_=_from_ok), profile="format")))
+report("an unknown scalar type warns", any("is not a known type" in i.message for i in validate_markdown(_tp.format(ptype="vibes", default='"a"', from_=""), profile="format")))
+report("a list type with a scalar default warns", any("default is not a list" in i.message for i in validate_markdown(_tp.format(ptype="list[domain]", default='"a.example"', from_=_from_ok), profile="format")))
+report("from.kind off-vocabulary warns", any("from.kind" in i.message for i in validate_markdown(_tp_ok.replace("kind: article", "kind: hearsay"), profile="format")))
+report("stale indicators warn under --profile quality", any("indicators observed" in i.message for i in validate_markdown(_tp_ok.replace("observed: 2026-05-11", "observed: 2020-01-01"), profile="quality")))
+_tp_cacao = markdown_to_cacao(_tp_ok)["playbook_variables"]["__c2__"]
+report("CACAO carries the list type and its provenance", _tp_cacao["x_hunt_type"] == "list[domain]" and _tp_cacao["x_hunt_from"]["ref"] == "https://x" and _tp_cacao["value"] == "a.example")
+_tp_rt = parse_markdown(cacao_to_markdown(markdown_to_cacao(_tp_ok))).meta["parameters"]["c2"]
+report("type, list default and from: survive md → CACAO → md", _tp_rt["type"] == "list[domain]" and _tp_rt["default"] == ["a.example"] and str(_tp_rt["from"]["observed"]) == "2026-05-11", str(_tp_rt))
+report("a list of tool paths needs no from: (only volatile members rot)", not any("with no from:" in i.message for i in validate_markdown(_tp.format(ptype="list[path]", default="[a.exe]", from_=""), profile="format")))
+report("…and a year-old tool list is not called stale", not any("indicators observed" in i.message for i in validate_markdown(_tp.format(ptype="list[path]", default="[a.exe]", from_="    from: {kind: advisory, ref: AA, observed: 2020-01-01}\n"), profile="quality")))
+
 print("\nprevalence + baseline (SPEC §5.7)")
 _pv7 = """---
 hypothesis: x

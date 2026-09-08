@@ -52,7 +52,14 @@ guardrails:
 # --- Launch-time inputs ({{name}} placeholders in query bodies) --------------
 parameters:
   lookback: { type: duration, default: "14d" }
-  # add: { type: string | number | boolean | duration | host | ip | date | query | ... }
+  # scalars: string | number | integer | boolean | duration | date | host | ip |
+  #          domain | url | hash | email | path | user | query          (SPEC §3.7)
+  # typed indicator list — `from:` says where it came from, so it can be refreshed:
+  # c2_domains:
+  #   type: list[domain]
+  #   default: ["<domain>"]
+  #   from: { kind: article, ref: <url>, observed: 2026-01-01 }
+  #   # reference it as `in~ (split("{{c2_domains}}", ","))` — members join with commas
 
 # --- Abstract data sources / agents / people --------------------------------
 targets:
