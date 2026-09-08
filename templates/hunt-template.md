@@ -14,6 +14,22 @@ references:
   - name: <source>
     url: <url>
 
+# --- Why this hunt exists (SPEC §3.1) ----------------------------------------
+# Closed vocabularies shared with HUNT-EX, so a library can be filtered and a
+# negative result can still be justified upward. All optional.
+hunt:
+  trigger: intel-report                 # intel-report | sector-alert | prior-hunt | incident-followup |
+                                        # red-team | purple-team | crown-jewel | detection-gap |
+                                        # analyst-intuition | ioc-sweep
+  applicability: universal              # universal | sector-specific | environment-specific | campaign-specific
+  handoff: keep-as-periodic-hunt        # promote-to-detection | keep-as-periodic-hunt | retire |
+                                        # escalated-to-ir | handed-to-detection-engineering
+  justification: >
+    <Why the business is paying for this: the obligation, the exposure, the
+    crown jewel. This is what makes "we found nothing" defensible.>
+  assets: [<business asset or process at stake>]
+  # review_by: 2027-01-01               # justifications go stale; date the next review
+
 # --- Agent safety posture (SPEC §8.1) ----------------------------------------
 # These are the defaults and apply even if you delete this block. Spell them out
 # only to relax one — which the linter will warn about, by design.
@@ -30,17 +46,20 @@ parameters:
 
 # --- Abstract data sources / agents / people --------------------------------
 targets:
-  siem:   { category: siem,      name: SIEM }          # + optional per-runtime binding:
+  # A store (siem, datalake) must say which telemetry planes it holds; a plane
+  # category (endpoint, iam, network, …) derives it. Planes (SPEC §6):
+  # endpoint | network | identity | email | cloud-control-plane | cloud-workload | saas | ot-ics
+  siem:   { category: siem,      name: SIEM, telemetry: [identity] }   # + optional per-runtime binding:
   # edr:  { category: endpoint,  name: EDR, huntbase: { product: msatp } }
   hunter: { agent: true,         name: Hunt agent }    # an agent; the runtime binds which one
   tier2:  { role: analyst,       name: Tier-2 analyst }
 
-# --- Sharing classification (optional; PROFILES.md §3) ------------------------
-# Only read when exporting to MISP (`huntmd convert … --to misp`). HUNT-EX vocab.
+# --- MISP-only knobs (optional; PROFILES.md §3) -------------------------------
+# Classification lives in `hunt:` above and telemetry on the targets; this block
+# is only for things MISP alone needs.
 # misp:
-#   telemetry: [identity]               # override when targets are just "siem"
-#   trigger: intel-report               # intel-report | sector-alert | prior-hunt | …
-#   handoff: keep-as-periodic-hunt
+#   distribution: 2
+#   tags: ['workflow:state="complete"']
 
 ---
 

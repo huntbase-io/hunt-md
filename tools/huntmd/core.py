@@ -33,12 +33,119 @@ _PRIMITIVE_KINDS = {"query", "collection"}
 
 # Fenced-block language -> kind (a DSL language => query).
 _BLOCK_LANG_KIND = {"agent": "agent", "manual": "task", "action": "action", "collect": "collection"}
-# Languages the Huntbase runtime can execute (others: portability lint).
-_HUNTBASE_DSLS = {"kql", "spl", "esql", "esdsl", "aql", "mysql", "osquery", "sqlite", "cypher", "stix"}
-# Known languages for the open format (broader than Huntbase's executable set).
-_KNOWN_DSLS = _HUNTBASE_DSLS | {"sql", "eql", "sigma", "yara", "kestrel"}
+# Languages the Huntbase runtime can execute (others: portability lint), and
+# the languages the open format knows — both derived from LANGUAGES below.
 
 _SEVERITY_ORDINAL = {"critical", "high", "medium", "low"}
+
+#: Query-language table (SPEC §5.1) — the single source the linter, the Huntbase
+#: profile and the MISP exporter read. ``tag`` is the fence language; ``hunt_ex``
+#: the HUNT-EX ``query-language`` value it shares as; ``huntbase`` whether that
+#: runtime executes it.
+LANGUAGES: tuple[tuple[str, str, bool], ...] = (
+    ("kql", "kusto", True),
+    ("kusto", "kusto", True),
+    ("spl", "spl", True),
+    ("esql", "esql", True),
+    ("eql", "eql", False),
+    ("esdsl", "other", True),  # Elasticsearch Query DSL: HUNT-EX has no peer; `kibana-query` is KQL-the-other-one
+    ("aql", "aql", True),
+    ("xql", "xql", False),
+    ("cql", "cql", False),
+    ("sql", "sql", False),
+    ("mysql", "sql", True),
+    ("sqlite", "sql", True),
+    ("osquery", "sql", True),
+    ("cypher", "other", True),
+    ("kestrel", "other", False),
+    ("sigma", "sigma", False),
+    ("yara", "yara", False),
+    ("yara-l", "yara-l", False),
+    ("stix", "stix-pattern", True),
+    ("suricata", "suricata-snort", False),
+    ("snort", "suricata-snort", False),
+    ("shell", "shell", False),
+    ("bash", "shell", False),
+    ("powershell", "powershell", False),
+    ("python", "python", False),
+    ("pseudocode", "pseudocode", False),
+)
+LANGUAGE_TO_HUNT_EX = {tag: hx for tag, hx, _ in LANGUAGES}
+
+#: HUNT-EX vocabularies (misp-taxonomies/hunt-ex v4). The neutral ``hunt:``
+#: block (SPEC §3.1) and run results (§12) use these directly, so a hunt is
+#: classifiable without a MISP-specific block.
+HUNT_EX_VOCAB: dict[str, tuple[str, ...]] = {
+    "methodology": ("structured-hypothesis-driven", "unstructured-baseline", "model-assisted"),
+    "trigger": (
+        "intel-report", "sector-alert", "prior-hunt", "incident-followup", "red-team", "purple-team",
+        "crown-jewel", "detection-gap", "analyst-intuition", "ioc-sweep",
+    ),
+    "outcome": (
+        "hypothesis-confirmed-malicious", "hypothesis-confirmed-benign", "hypothesis-not-confirmed", "inconclusive",
+    ),
+    "byproduct": ("detection-gap", "data-source-gap", "tooling-gap", "process-gap", "vuln-or-misconfig"),
+    "content": ("hypothesis", "query", "finding"),
+    "telemetry": ("endpoint", "network", "identity", "email", "cloud-control-plane", "cloud-workload", "saas", "ot-ics"),
+    "query-language": (
+        "sigma", "yara", "suricata-snort", "stix-pattern", "spl", "kusto", "eql", "esql", "kibana-query", "aql",
+        "xql", "yara-l", "cql", "devo-linq", "sql", "shell", "powershell", "python", "pseudocode", "other",
+    ),
+    "applicability": ("universal", "sector-specific", "environment-specific", "campaign-specific"),
+    "handoff": (
+        "promote-to-detection", "keep-as-periodic-hunt", "retire", "escalated-to-ir", "handed-to-detection-engineering",
+    ),
+}
+
+#: The neutral ``hunt:`` frontmatter block (SPEC §3.1): programme-level facts
+#: about the hunt — why it exists and what happens after — in closed vocabularies
+#: shared with HUNT-EX, plus the business justification behind it.
+HUNT_BLOCK_KEYS = ("trigger", "methodology", "applicability", "handoff", "justification", "assets", "review_by")
+_HUNT_BLOCK_VOCAB = {k: HUNT_EX_VOCAB[k] for k in ("trigger", "methodology", "applicability", "handoff")}
+
+#: Telemetry planes (SPEC §6) — what an organisation knows it has or lacks. A
+#: target ``category`` that unambiguously names a plane derives it; a store
+#: (``siem``, ``datalake``) must state ``telemetry:`` explicitly.
+TELEMETRY_PLANES = HUNT_EX_VOCAB["telemetry"]
+CATEGORY_TO_TELEMETRY = {
+    "endpoint": "endpoint", "edr": "endpoint", "network": "network", "iam": "identity", "identity": "identity",
+    "email": "email", "cloud": "cloud-control-plane", "cloud-control-plane": "cloud-control-plane",
+    "cloud-workload": "cloud-workload", "saas": "saas", "ot": "ot-ics", "ics": "ot-ics", "ot-ics": "ot-ics",
+}
+
+
+_HUNTBASE_DSLS = {tag for tag, _, hb in LANGUAGES if hb}
+_KNOWN_DSLS = {tag for tag, _, _ in LANGUAGES}
+
+
+def hunt_block(meta: dict[str, Any]) -> dict[str, Any]:
+    """The ``hunt:`` block, with the deprecated ``misp:`` keys as a fallback.
+
+    Reads ``hunt:`` first; a classification key still living under ``misp:`` is
+    honoured (one minor version of soft deprecation, see PROFILES §3) so a 0.5
+    hunt classifies exactly as it did.
+    """
+    block = meta.get("hunt")
+    out = dict(block) if isinstance(block, dict) else {}
+    legacy = meta.get("misp")
+    if isinstance(legacy, dict):
+        for k in ("trigger", "methodology", "applicability", "handoff"):
+            if k not in out and legacy.get(k) is not None:
+                out[k] = legacy[k]
+    return out
+
+
+def target_telemetry(target: dict[str, Any]) -> list[str]:
+    """Telemetry planes a data-source target covers: declared, else derived from category."""
+    declared = target.get("telemetry")
+    if declared:
+        return [str(v) for v in ([declared] if isinstance(declared, str) else declared)]
+    plane = CATEGORY_TO_TELEMETRY.get(str(target.get("category", "")).lower())
+    return [plane] if plane else []
+
+
+def _is_data_source(target: dict[str, Any]) -> bool:
+    return not (target.get("agent") or target.get("role") or target.get("individual"))
 
 #: TLP:2.0 sharing levels, least to most restricted. Used by `--max-tlp` so a
 #: public repository can mechanically reject hunts that shouldn't leave the org.
@@ -621,7 +728,7 @@ def _config_for(s: Step) -> dict[str, Any]:
 
 
 #: Frontmatter keys the definition carries as first-class ``meta`` entries.
-_DEFINITION_META_KEYS = ("labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type")
+_DEFINITION_META_KEYS = ("labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type", "hunt")
 
 
 def _hunt_meta(pb: Playbook) -> dict[str, Any]:
@@ -653,6 +760,7 @@ _FM_ORDER = (
     "tlp",
     "severity",
     "hypothesis",
+    "hunt",
     "references",
     "parameters",
     "targets",
@@ -968,7 +1076,7 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
 
 @dataclass
 class Issue:
-    level: str  # error | warn
+    level: str  # error | warn | info
     slug: str
     message: str
 
@@ -1003,6 +1111,8 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
         issues += _check_tlp(pb, max_tlp)
     issues += _check_guardrails(pb)
     issues += _check_variables(pb)
+    issues += _check_hunt_block(pb)
+    issues += _check_telemetry(pb)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1076,6 +1186,57 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
         from huntmd.misp import misp_issues  # noqa: PLC0415 - adapters import core, not vice versa
 
         issues.extend(Issue(lvl, slug, msg) for lvl, slug, msg in misp_issues(pb))
+    return issues
+
+
+def _check_hunt_block(pb: Playbook) -> list[Issue]:
+    """The neutral ``hunt:`` block (SPEC §3.1): closed vocabularies warn, never reject."""
+    issues: list[Issue] = []
+    block = pb.meta.get("hunt")
+    if block is None:
+        return issues
+    if not isinstance(block, dict):
+        return [Issue("error", "", "hunt: must be a mapping")]
+    for key, value in block.items():
+        if key not in HUNT_BLOCK_KEYS:
+            issues.append(Issue("warn", "", f"hunt.{key} is not a defined key {list(HUNT_BLOCK_KEYS)} (kept verbatim)"))
+            continue
+        vocab = _HUNT_BLOCK_VOCAB.get(key)
+        if vocab is not None:
+            for v in [value] if isinstance(value, str) else (value if isinstance(value, list) else [value]):
+                if str(v) not in vocab:
+                    issues.append(Issue("warn", "", f"hunt.{key} '{v}' not in {list(vocab)}"))
+        elif key == "assets" and not isinstance(value, list):
+            issues.append(Issue("warn", "", "hunt.assets should be a list of the business assets or processes at stake"))
+        elif key == "review_by" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(value)):
+            issues.append(Issue("warn", "", f"hunt.review_by '{value}' is not an ISO date (YYYY-MM-DD)"))
+    return issues
+
+
+def _check_telemetry(pb: Playbook) -> list[Issue]:
+    """Every data-source target a query reads should resolve to a telemetry plane (SPEC §6)."""
+    issues: list[Issue] = []
+    targets = pb.meta.get("targets") or {}
+    for slug, t in targets.items():
+        if not isinstance(t, dict) or not _is_data_source(t):
+            continue
+        for plane in target_telemetry(t):
+            if plane not in TELEMETRY_PLANES:
+                issues.append(Issue("warn", "", f"target {slug}: telemetry '{plane}' not in {list(TELEMETRY_PLANES)}"))
+    unresolved = sorted(
+        {s.target for s in pb.steps if s.kind in ("query", "collection") and s.target
+         and isinstance(targets.get(s.target), dict) and _is_data_source(targets[s.target])
+         and not target_telemetry(targets[s.target])}
+    )
+    for slug in unresolved:
+        issues.append(
+            Issue(
+                "warn",
+                "",
+                f"target {slug}: category '{targets[slug].get('category')}' names a store, not a telemetry plane — "
+                f"add telemetry: [{'|'.join(TELEMETRY_PLANES)}] so data requirements are checkable",
+            )
+        )
     return issues
 
 

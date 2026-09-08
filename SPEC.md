@@ -74,6 +74,11 @@ severity: high                      # critical | high | medium | low  (or 0–10
 tlp: amber
 hypothesis: >
   Service accounts are being kerberoasted from non-admin workstations.
+hunt:                               # why the hunt exists, what happens after (§3.3)
+  trigger: intel-report
+  handoff: keep-as-periodic-hunt
+  justification: >
+    A cracked SPN password is reusable until rotated and invisible to MFA.
 references:
   - name: CISA AA23-320A
     url: https://www.cisa.gov/...
@@ -81,18 +86,50 @@ parameters:                         # launch-time inputs; portable {{name}} plac
   lookback:  { type: duration, default: "14d" }
   suspects:  { type: string }       # no default → collected at launch or bound at runtime
 targets:                            # abstract data sources / agents / people (§6)
-  siem:   { category: siem,      name: SIEM }
+  siem:   { category: siem,      name: SIEM, telemetry: [identity] }
   edr:    { category: endpoint,  name: EDR }
   hunter: { agent: true,         name: Hunt agent }     # generic agent — runtime binds it
   tier2:  { role: analyst,       name: Tier-2 analyst }
 ---
 ```
 
-Unknown frontmatter keys pass through (Tier 2). `parameters`, `targets`,
-`labels`, `severity`, `hypothesis` have defined meaning (§11). A profile MAY
-define a namespaced block for facts only it needs (e.g. `misp:` for HUNT-EX
-sharing classification, `huntbase:` bindings on targets); such blocks are
-documented in PROFILES.md, never here, and every other profile ignores them.
+Unknown frontmatter keys pass through (Tier 2) — the parser keeps them and
+every exporter carries them verbatim (`x_hunt_frontmatter` in a definition,
+`x-hunt.frontmatter` in CACAO). `parameters`, `targets`, `labels`, `severity`,
+`hypothesis`, `hunt` have defined meaning (§11). A profile MAY define a
+namespaced block for facts only it needs (e.g. `huntbase:` bindings on targets,
+`misp:` for MISP-only knobs); such blocks are documented in PROFILES.md, never
+here, and every other profile ignores them.
+
+### 3.3 The `hunt:` block — why this hunt exists
+
+A hunt is a hypothesis plus a programme decision: someone chose to spend
+analyst time on it, and something happens when it ends. That decision is a fact
+about the hunt, not about any sharing platform, so it has a neutral home. All
+keys are optional; the vocabularies are the HUNT-EX ones (they are the PEAK /
+TaHiTI vocabulary), so a hunt classifies for sharing without a profile-specific
+block.
+
+```yaml
+hunt:
+  trigger: crown-jewel          # intel-report | sector-alert | prior-hunt | incident-followup | red-team |
+                                # purple-team | crown-jewel | detection-gap | analyst-intuition | ioc-sweep
+  methodology: structured-hypothesis-driven   # | unstructured-baseline | model-assisted  (default: the first)
+  applicability: universal      # universal | sector-specific | environment-specific | campaign-specific
+  handoff: promote-to-detection # promote-to-detection | keep-as-periodic-hunt | retire | escalated-to-ir |
+                                # handed-to-detection-engineering
+  justification: >              # prose: the obligation, exposure or asset that pays for this hunt
+    Cardholder-data systems are in PCI scope; certificate-based escalation
+    bypasses every password control we report on.
+  assets: [cardholder-db, issuing CAs]   # business assets or processes at stake
+  review_by: 2027-03-01         # justifications go stale; when to re-examine this one
+```
+
+`trigger` is the structured half of the business justification — the *kind* of
+reason the hunt exists. `justification` is the prose half: what makes a negative
+result defensible rather than wasted spend. A library index filters on the
+first; a report quotes the second. Linters warn on an off-vocabulary value and
+never reject; a missing `justification` is a `quality`-profile warning (§13).
 
 ### 3.2 Severity
 Prefer the ordinal words `critical | high | medium | low`. A numeric `severity`
@@ -159,11 +196,32 @@ SecurityEvent
 
 ### 5.1 Language tag — open, linted
 `query_language` is an **open string**. A compiler MUST NOT reject unknown
-languages; a linter SHOULD warn outside a configurable known set (e.g. `kql`,
-`spl`, `sql`, `sqlite`, `eql`, `esql`, `esdsl`, `aql`, `osquery`, `cypher`,
-`sigma`, `stix`, `yara`, `kestrel`). Runtimes map the tag to whatever transport
-they have (see profiles); an unmapped language is a profile-level lint, not a
-format error.
+languages; a linter SHOULD warn outside the known set below. Runtimes map the
+tag to whatever transport they have (see profiles); an unmapped language is a
+profile-level lint, not a format error.
+
+The known set, and how each tag shares (its HUNT-EX `query-language` value —
+the single table the reference linter and the MISP exporter both read):
+
+| tag | HUNT-EX | note |
+|---|---|---|
+| `kql`, `kusto` | `kusto` | Microsoft Sentinel / Defender |
+| `spl` | `spl` | Splunk |
+| `esql` | `esql` | Elastic ES\|QL |
+| `eql` | `eql` | Elastic Event Query Language |
+| `esdsl` | `other` | Elasticsearch Query DSL — HUNT-EX has no peer (`kibana-query` is Kibana's KQL) |
+| `aql` | `aql` | IBM QRadar |
+| `xql` | `xql` | Palo Alto Cortex |
+| `cql` | `cql` | CrowdStrike |
+| `sql`, `mysql`, `sqlite`, `osquery` | `sql` | dialects share one value |
+| `cypher`, `kestrel` | `other` | graph / hunting DSLs |
+| `sigma`, `yara`, `yara-l` | same name | portable detection formats |
+| `stix` | `stix-pattern` | STIX 2 patterning |
+| `suricata`, `snort` | `suricata-snort` | network rules |
+| `shell`, `bash`, `powershell`, `python`, `pseudocode` | same name (`bash` → `shell`) | scripts and prose logic |
+
+Anything else exports as `other`. Which tags a runtime *executes* is that
+runtime's profile (PROFILES.md), not this table.
 
 ### 5.2 Info-string parameters
 - `target=<slug>` — a frontmatter `targets:` entry (§6). Required for queries.
@@ -224,6 +282,23 @@ A runtime uses its own namespace hint if present, else resolves the abstract
 The set of targets referenced by query steps is the hunt's **data
 requirements** — runtimes use it for a "do you have the sources this hunt needs"
 check.
+
+**Telemetry planes.** `category` says where data is *stored*; a plane says what
+kind of telemetry it *is* — which is what an organisation actually knows it has
+or lacks. A data-source target resolves to one or more planes from the closed
+set `endpoint | network | identity | email | cloud-control-plane |
+cloud-workload | saas | ot-ics`:
+
+- derived from `category` where unambiguous: `endpoint`/`edr` → `endpoint`,
+  `iam`/`identity` → `identity`, `network` → `network`, `email` → `email`,
+  `cloud` → `cloud-control-plane`, `cloud-workload`, `saas`, `ot`/`ics` → `ot-ics`;
+- stated explicitly on a store, which may hold several:
+  `siem: { category: siem, telemetry: [identity, endpoint], name: SIEM }`.
+
+A linter warns when a query's target resolves to no plane, and when a stated
+plane is off-vocabulary. Planes feed data-requirement checks, run-result
+`telemetry_coverage` (§12) and sharing tags (PROFILES §3) without any
+profile-specific override.
 
 ---
 
@@ -414,6 +489,8 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `parameters:` | `parameters[] { name, type, default? }` |
 | `targets:` | `targets[] { slug, category|agent|role, bindings{} }` |
 | `labels: attack.*` | `attack_techniques[]` |
+| `hunt:` | `hunt { trigger, methodology, applicability, handoff, justification, assets, review_by }` (§3.3) |
+| `targets.*.telemetry` | `targets[].telemetry[]` — declared or derived from category (§6) |
 | `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |
 | `unavailable:` | `edge { branch: on_unavailable }` (§7.2) |
 | `$var` / `{{param}}` | runtime variable / launch parameter |

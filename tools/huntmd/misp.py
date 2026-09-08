@@ -33,11 +33,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 from huntmd.core import (
+    HUNT_EX_VOCAB,
+    LANGUAGE_TO_HUNT_EX,
     ConversionError,
     Playbook,
     Step,
+    hunt_block,
     parse_markdown,
     playbook_to_markdown,
+    target_telemetry,
 )
 
 #: Stable namespace for all hunt.md-derived MISP identifiers (shared with CACAO).
@@ -45,28 +49,8 @@ _NS = uuid.uuid5(uuid.NAMESPACE_DNS, "hunt.md")
 
 TAXONOMY = "hunt-ex"
 
-#: HUNT-EX taxonomy (machinetag.json v4) — closed vocabularies per predicate.
-_HUNT_EX: dict[str, tuple[str, ...]] = {
-    "methodology": ("structured-hypothesis-driven", "unstructured-baseline", "model-assisted"),
-    "trigger": (
-        "intel-report", "sector-alert", "prior-hunt", "incident-followup", "red-team", "purple-team",
-        "crown-jewel", "detection-gap", "analyst-intuition", "ioc-sweep",
-    ),
-    "outcome": (
-        "hypothesis-confirmed-malicious", "hypothesis-confirmed-benign", "hypothesis-not-confirmed", "inconclusive",
-    ),
-    "byproduct": ("detection-gap", "data-source-gap", "tooling-gap", "process-gap", "vuln-or-misconfig"),
-    "content": ("hypothesis", "query", "finding"),
-    "telemetry": ("endpoint", "network", "identity", "email", "cloud-control-plane", "cloud-workload", "saas", "ot-ics"),
-    "query-language": (
-        "sigma", "yara", "suricata-snort", "stix-pattern", "spl", "kusto", "eql", "esql", "kibana-query", "aql",
-        "xql", "yara-l", "cql", "devo-linq", "sql", "shell", "powershell", "python", "pseudocode", "other",
-    ),
-    "applicability": ("universal", "sector-specific", "environment-specific", "campaign-specific"),
-    "handoff": (
-        "promote-to-detection", "keep-as-periodic-hunt", "retire", "escalated-to-ir", "handed-to-detection-engineering",
-    ),
-}
+#: HUNT-EX taxonomy (machinetag.json v4) — closed vocabularies per predicate (single source: core).
+_HUNT_EX = HUNT_EX_VOCAB
 
 #: misp-objects templates (name → (uuid, version, meta-category, description)).
 #: The description is the template's own — MISP silently drops an object whose
@@ -98,13 +82,8 @@ _TEMPLATES = {
     ),
 }
 
-#: hunt.md query language (SPEC §5.1) → HUNT-EX ``query-language`` value.
-_LANG_TO_HUNT_EX = {
-    "kql": "kusto", "kusto": "kusto", "spl": "spl", "esql": "esql", "eql": "eql", "esdsl": "kibana-query",
-    "aql": "aql", "xql": "xql", "sigma": "sigma", "yara": "yara", "yara-l": "yara-l", "stix": "stix-pattern",
-    "sql": "sql", "mysql": "sql", "sqlite": "sql", "osquery": "sql", "cql": "cql", "shell": "shell", "bash": "shell",
-    "powershell": "powershell", "python": "python", "suricata": "suricata-snort", "snort": "suricata-snort",
-}
+#: hunt.md query language (SPEC §5.1) → HUNT-EX ``query-language`` value (single source: core.LANGUAGES).
+_LANG_TO_HUNT_EX = LANGUAGE_TO_HUNT_EX
 #: The inverse, for import — HUNT-EX / object ``query-language`` → fence language.
 _HUNT_EX_TO_LANG = {
     "kusto": "kql", "kql": "kql", "spl": "spl", "esql": "esql", "eql": "eql", "kibana-query": "esdsl", "aql": "aql",
@@ -116,14 +95,6 @@ _HUNT_EX_TO_LANG = {
 _LANG_TO_OBJECT_LABEL = {
     "kql": "KQL", "kusto": "KQL", "spl": "SPL", "eql": "EQL", "osquery": "OSQuery SQL", "yara-l": "YARA-L",
     "stix": "STIX Pattern",
-}
-
-#: target ``category`` (SPEC §6) → HUNT-EX ``telemetry`` value. ``siem`` is a
-#: store, not a telemetry plane, so it maps to nothing on its own.
-_CATEGORY_TO_TELEMETRY = {
-    "endpoint": "endpoint", "edr": "endpoint", "network": "network", "iam": "identity", "identity": "identity",
-    "email": "email", "cloud": "cloud-control-plane", "cloud-control-plane": "cloud-control-plane",
-    "cloud-workload": "cloud-workload", "saas": "saas", "ot": "ot-ics", "ics": "ot-ics", "ot-ics": "ot-ics",
 }
 
 #: Run-result disposition (SPEC §12.1) → HUNT-EX ``outcome`` + finding ``outcome``.
@@ -205,17 +176,26 @@ def _bindings(target: dict[str, Any]) -> list[str]:
     return products
 
 
+def _classification(pb: Playbook) -> dict[str, Any]:
+    """``hunt:`` (SPEC §3.1), with the deprecated ``misp:`` keys honoured as a fallback."""
+    return hunt_block(pb.meta)
+
+
 def _telemetry(pb: Playbook) -> list[str]:
-    """``misp.telemetry`` if the author stated it, else derived from target categories."""
+    """Planes from the targets (declared ``telemetry:`` or derived from category, SPEC §6).
+
+    A ``misp.telemetry`` override is still honoured (deprecated in 0.6; the
+    plane now lives on the target).
+    """
     declared = _misp_block(pb).get("telemetry")
     if declared:
         return [str(v) for v in ([declared] if isinstance(declared, str) else declared)]
     seen: list[str] = []
     for t in (pb.meta.get("targets") or {}).values():
         if isinstance(t, dict):
-            tele = _CATEGORY_TO_TELEMETRY.get(str(t.get("category", "")).lower())
-            if tele and tele not in seen:
-                seen.append(tele)
+            for tele in target_telemetry(t):
+                if tele not in seen:
+                    seen.append(tele)
     return seen
 
 
@@ -291,7 +271,7 @@ def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None
     attrs = [a("hunt-title", pb.name or "Untitled hunt")]
     purpose = misp.get("purpose") or pb.description.strip() or pb.meta.get("hypothesis") or pb.name
     attrs.append(a("purpose", str(purpose).strip()))
-    methodology = misp.get("methodology") or "structured-hypothesis-driven"
+    methodology = _classification(pb).get("methodology") or "structured-hypothesis-driven"
     attrs.append(a("methodology", methodology))
     status = misp.get("status") or ("Concluded" if result else "Planned")
     attrs.append(a("status", status))
@@ -425,9 +405,10 @@ def _event_tags(pb: Playbook, misp: dict, result_tags: list[dict]) -> list[dict]
     tags.append(_tag("content", "hypothesis"))
     if _query_steps(pb):
         tags.append(_tag("content", "query"))
-    tags.append(_tag("methodology", misp.get("methodology") or "structured-hypothesis-driven"))
+    classification = _classification(pb)
+    tags.append(_tag("methodology", classification.get("methodology") or "structured-hypothesis-driven"))
     for pred in ("trigger", "applicability", "handoff"):
-        vals = misp.get(pred)
+        vals = classification.get(pred)
         for v in [vals] if isinstance(vals, str) else (vals or []):
             tags.append(_tag(pred, str(v)))
     for tele in _telemetry(pb):
@@ -699,18 +680,28 @@ def misp_to_playbook(defn: Any) -> Playbook:
         targets.setdefault("analyst", {"role": "analyst", "name": "Analyst"})
         steps.append(Step(slug="compare-with-prior-finding", kind="task", target="analyst", body=body + "\n"))
 
-    meta["targets"] = targets
-    misp_meta: dict[str, Any] = {"event": str(ev.get("uuid") or "")}
+    classification: dict[str, Any] = {}
+    planes: list[str] = []
     for t in tags:
         m = _HUNT_EX_TAG.match(t)
-        if m and m.group(1) in ("methodology", "trigger", "applicability", "handoff", "telemetry"):
-            misp_meta.setdefault(m.group(1), []).append(m.group(2))
+        if m and m.group(1) in ("methodology", "trigger", "applicability", "handoff"):
+            classification.setdefault(m.group(1), []).append(m.group(2))
+        elif m and m.group(1) == "telemetry":
+            planes.append(m.group(2))
     if _first(context, "methodology"):
-        misp_meta["methodology"] = _first(context, "methodology")
-    for k, v in list(misp_meta.items()):
+        classification["methodology"] = _first(context, "methodology")
+    for k, v in list(classification.items()):
         if isinstance(v, list) and len(v) == 1:
-            misp_meta[k] = v[0]
-    meta["misp"] = misp_meta
+            classification[k] = v[0]
+    if classification:
+        meta["hunt"] = classification
+    # The event's telemetry planes land on the (guessed) targets, where SPEC §6 keeps them.
+    if planes:
+        for t in targets.values():
+            if not (t.get("agent") or t.get("role") or t.get("individual")):
+                t["telemetry"] = planes if len(planes) > 1 else planes[0]
+    meta["targets"] = targets
+    meta["misp"] = {"event": str(ev.get("uuid") or "")}
 
     pb.meta = meta
     pb.steps = steps
@@ -745,6 +736,10 @@ def misp_issues(pb: Playbook) -> list[tuple[str, str, str]]:
     misp = _misp_block(pb)
     for pred in ("methodology", "trigger", "applicability", "handoff", "telemetry"):
         vals = misp.get(pred)
+        if vals is None:
+            continue
+        moved = f"hunt.{pred}" if pred != "telemetry" else "targets.<slug>.telemetry"
+        out.append(("info", "", f"misp.{pred} moved to {moved} in 0.6 — still honoured; move it when convenient"))
         for v in [vals] if isinstance(vals, str) else (vals or []):
             if str(v) not in _HUNT_EX[pred]:
                 out.append(("warn", "", f"misp.{pred} '{v}' not in hunt-ex vocabulary {list(_HUNT_EX[pred])}"))

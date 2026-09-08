@@ -50,11 +50,15 @@ against the format spec and a lint pass.
 - **Portability** — prefer abstract `targets` (`category:`); add per-runtime
   `bindings` (e.g. `huntbase: { product: … }`) rather than hard-coding a product
   as the only option.
-- **Shareable via MISP** (optional, `--profile misp`) — a `category:` that maps to
-  a HUNT-EX telemetry plane (or a `misp: { telemetry: [...] }` override) and an
-  ATT&CK label, so peers filtering their MISP instance can find the hunt. Extra
-  HUNT-EX classification (`trigger`, `applicability`, `handoff`) goes in the
-  namespaced `misp:` block — see PROFILES.md §3.
+- **Targets resolve to a telemetry plane** — a plane category (`endpoint`,
+  `iam`, …) derives it; a store (`siem`, `datalake`) states
+  `telemetry: [identity, …]` (SPEC §6). A query target with no plane warns.
+- **Say why the hunt exists** — the `hunt:` block (SPEC §3.3): `trigger`,
+  `handoff`, and a prose `justification`. Off-vocabulary values warn; a
+  missing justification is a `--profile quality` warning.
+- **Shareable via MISP** (optional, `--profile misp`) — with the two rules above
+  met and an ATT&CK label, peers filtering their MISP instance can find the
+  hunt; nothing MISP-specific is needed. See PROFILES.md §3.
 
 ## What belongs in this repository
 

@@ -15,6 +15,16 @@ hypothesis: >
   MFA devices, and are establishing persistence via commercial RMM tooling
   and/or a rogue federated identity provider — while monitoring our
   collaboration platforms for signs of detection.
+hunt:                   # why this hunt exists and what happens after (SPEC §3.1)
+  trigger: sector-alert
+  applicability: campaign-specific
+  handoff: promote-to-detection
+  justification: >
+    The AA23-320A chain begins at the helpdesk, not at a vulnerability, so no
+    patch closes it. Identity takeover of one privileged user has ended in full
+    tenant compromise and ransomware at peer organisations; this hunt is the
+    compensating control until helpdesk caller verification is redesigned.
+  assets: [privileged identities, helpdesk process, M365 tenant]
 references:
   - name: CISA AA23-320A — Scattered Spider (updated 2025-07-29)
     url: https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
@@ -25,7 +35,7 @@ targets:
   # Abstract categories keep the hunt portable; the optional per-runtime binding
   # hint pins a concrete source when running on that platform.
   iam:    { category: iam,      name: Identity audit, huntbase: { product: azure_log_analytics } }
-  siem:   { category: siem,     name: SIEM,           huntbase: { product: azure_log_analytics } }
+  siem:   { category: siem,     name: SIEM,           telemetry: [saas], huntbase: { product: azure_log_analytics } }
   edr:    { category: endpoint, name: EDR,            huntbase: { product: msatp } }
   hunter: { agent: true,        name: Hunt agent }
   tier2:  { role: analyst,      name: Tier-2 analyst }

@@ -277,31 +277,36 @@ searchable objects and tags MISP wants, and the exact source alongside them.
 `"finding"` when a result is exported), `hunt-ex:query-language=` for each
 query language used (hunt.md `kql` → `kusto`, `stix` → `stix-pattern`, SQL
 dialects → `sql`, unknown → `other`), `hunt-ex:telemetry=` derived from target
-categories (`iam`/`identity` → `identity`, `endpoint` → `endpoint`, `cloud` →
-`cloud-control-plane`, … — `siem` is a store, not a plane, so it contributes
-nothing on its own), and `hunt-ex:methodology=` (default
-`structured-hypothesis-driven`, since a hunt.md always has a hypothesis).
+planes (SPEC §6: declared `telemetry:` on a store, or derived from a plane
+category — `siem` is a store, not a plane, so it contributes nothing on its
+own), and `hunt-ex:methodology=` (default `structured-hypothesis-driven`,
+since a hunt.md always has a hypothesis).
 
-Values HUNT-EX asks for that hunt.md doesn't otherwise know go in an optional,
-namespaced `misp:` frontmatter block — the same convention as `huntbase:`
+The classification HUNT-EX asks for is read from the neutral `hunt:` block
+(SPEC §3.3) — `trigger`, `methodology`, `applicability`, `handoff` — and the
+telemetry planes from the targets (SPEC §6), so a hunt classifies for sharing
+without any MISP-specific content. What remains in the optional, namespaced
+`misp:` block is genuinely MISP-only — the same convention as `huntbase:`
 bindings on targets, and just as ignorable by every other profile:
 
 ```yaml
 misp:
-  telemetry: [identity]          # overrides the category-derived value
-  trigger: intel-report          # hunt-ex:trigger
-  applicability: universal       # hunt-ex:applicability
-  handoff: keep-as-periodic-hunt # hunt-ex:handoff
-  methodology: structured-hypothesis-driven
   contributors: [ISAC hunt team]
   tags: ['workflow:state="complete"']   # any extra event tags, verbatim
   distribution: 2                # MISP distribution; defaults from tlp
+  purpose: …                     # context.purpose, when the H1 description isn't it
 ```
 
-`huntmd validate --profile misp` warns when a `misp:` value is off-vocabulary,
-when a query language has no HUNT-EX mapping, when no target maps to a telemetry
-plane, or when there is no ATT&CK label — each is something a peer would filter
-on and fail to find.
+*Deprecated in 0.6, still honoured:* `misp.trigger` / `methodology` /
+`applicability` / `handoff` (now `hunt.*`) and `misp.telemetry` (now
+`targets.<slug>.telemetry`). The exporter reads the new home first, the old one
+second, and `--profile misp` prints an info-level "moved" notice for each. They
+are removed in a later minor version.
+
+`huntmd validate --profile misp` warns when a legacy `misp:` value is
+off-vocabulary, when a query language has no HUNT-EX mapping, when no target
+maps to a telemetry plane, or when there is no ATT&CK label — each is something
+a peer would filter on and fail to find.
 
 **Findings and outcomes.** A run result's `disposition` maps to
 `hunt-ex:outcome` conservatively: `malicious` → `hypothesis-confirmed-malicious`;

@@ -503,6 +503,20 @@ report("malicious → hypothesis-confirmed-malicious", 'hunt-ex:outcome="hypothe
 _badmisp = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nmisp: {trigger: vibes, telemetry: [identity]}\n---\n# t\n## q\n```kql target=s\nx\n```\n→ end\n"
 report("misp: block off-vocabulary value warns under --profile misp", any("vibes" in str(i) for i in validate_markdown(_badmisp, profile="misp")))
 report("--profile format ignores the misp: block", not any("vibes" in str(i) for i in validate_markdown(_badmisp, profile="format")))
+report("legacy misp: classification keys get an info-level 'moved' notice", any(i.level == "info" and "moved to hunt.trigger" in i.message for i in validate_markdown(_badmisp, profile="misp")))
+
+print("\nhunt: block + telemetry planes (SPEC §3.1, §6)")
+_hb = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nhunt: {{trigger: {trig}, handoff: promote-to-detection, justification: 'PCI scope', assets: [cardholder-db], review_by: {rb}}}\ntargets:\n  siem: {{category: siem, name: SIEM{tele}}}\n---\n# t\n## q\n```kql target=siem\nx\n```\n→ end\n"
+_good_hb = _hb.format(trig="crown-jewel", rb="2027-01-01", tele=", telemetry: [identity]")
+report("well-formed hunt: block + declared telemetry lints clean", not [i for i in validate_markdown(_good_hb, profile="format") if i.level != "info"], str(validate_markdown(_good_hb, profile="format")))
+report("hunt.trigger off-vocabulary warns (never rejects)", any(i.level == "warn" and "hunt.trigger" in i.message for i in validate_markdown(_hb.format(trig="vibes", rb="2027-01-01", tele=", telemetry: [identity]"), profile="format")))
+report("hunt.review_by must be an ISO date", any("review_by" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="soon", tele=", telemetry: [identity]"), profile="format")))
+report("a siem target with no telemetry plane warns", any("names a store" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=""), profile="format")))
+report("an off-vocabulary plane warns", any("telemetry 'mainframe'" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=", telemetry: [mainframe]"), profile="format")))
+report("hunt: classification drives the hunt-ex tags", {'hunt-ex:trigger="crown-jewel"', 'hunt-ex:handoff="promote-to-detection"', 'hunt-ex:telemetry="identity"'} <= {t["name"] for t in markdown_to_misp(_good_hb)["Event"]["Tag"]})
+report("hunt: block reaches the definition first-class", markdown_to_definition(_good_hb)["hunt"]["meta"]["hunt"]["trigger"] == "crown-jewel")
+from huntmd.core import LANGUAGES, LANGUAGE_TO_HUNT_EX, HUNT_EX_VOCAB  # noqa: E402
+report("every language maps to a HUNT-EX query-language value", all(hx in HUNT_EX_VOCAB["query-language"] for _, hx, _ in LANGUAGES) and LANGUAGE_TO_HUNT_EX["kql"] == "kusto")
 # A hand-authored MISP event (no hunt.md provenance at all) imports as a draft.
 _foreign = {
     "Event": {
@@ -524,14 +538,15 @@ _fmd = misp_to_markdown(_foreign)
 _fpb = parse_markdown(_fmd)
 _ferr = [str(i) for i in validate_markdown(_fmd, profile="format") if i.level == "error"]
 report(
-    "foreign MISP event → draft: kql + sigma queries, ATT&CK label, tlp, finding as review task, misp: provenance",
+    "foreign MISP event → draft: kql + sigma queries, ATT&CK label, tlp, finding as review task, hunt: + telemetry on targets",
     not _ferr
     and sorted(s.lang for s in _fpb.steps if s.kind == "query") == ["kql", "sigma"]
     and "attack.t1528" in _fpb.meta["labels"]
     and _fpb.meta["tlp"] == "amber"
     and any(s.kind == "task" for s in _fpb.steps)
-    and _fpb.meta["misp"]["telemetry"] == "saas"
-    and _fpb.meta["misp"]["trigger"] == "sector-alert",
+    and all(t.get("telemetry") == "saas" for t in _fpb.meta["targets"].values() if t.get("category"))
+    and _fpb.meta["hunt"]["trigger"] == "sector-alert"
+    and _fpb.meta["misp"]["event"] == "11111111-2222-3333-4444-555555555555",
     "; ".join(_ferr[:2]) or _fmd[:300],
 )
 for fx in sorted((ROOT / "examples" / "misp-export").glob("*.json")):

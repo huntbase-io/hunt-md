@@ -14,6 +14,19 @@ hypothesis: >
   certificate from a misconfigured ADCS template that permits an enrollee-supplied
   subject (ESC1), naming a higher-privileged identity, and has used the resulting
   certificate to authenticate as that identity via PKINIT.
+hunt:                   # why this hunt exists and what happens after (SPEC §3.1)
+  trigger: intel-report
+  applicability: universal
+  handoff: promote-to-detection
+  justification: >
+    A certificate issued through an ESC1 template is a credential that survives
+    password resets, is valid for a year by default, and authenticates as any
+    identity the enrollee chose — including domain administrators. CISA's red
+    team used exactly this chain to take two critical-infrastructure domains.
+    Nothing that watches passwords sees it, so this hunt is the only control
+    until every issuing CA's templates are hardened and audited.
+  assets: [Active Directory, issuing CAs, tier-0 identities]
+  review_by: 2027-03-01
 references:
   - name: "GuidePoint Security — Hunting Abuse: Detecting Privilege Escalation Through the ADCS Database"
     url: https://www.guidepointsecurity.com/blog/detecting-privilege-escalaction-through-adcs/
@@ -41,16 +54,11 @@ targets:
   ca:     { category: endpoint, name: Issuing CA host(s) }
   cadb:   { category: endpoint, name: "ADCS CA database (ESE, collected)" }
   ad:     { category: identity, name: Directory (LDAP / AD audit) }
-  siem:   { category: siem,     name: SIEM }
+  siem:   { category: siem,     name: SIEM, telemetry: [identity] }
   hunter: { agent: true,        name: Hunt agent }
   tier2:  { role: analyst,      name: Tier-2 analyst }
   pki:    { role: pki-owner,    name: AD/PKI platform owner }
 
-misp:                   # HUNT-EX classification when shared via MISP (PROFILES §3)
-  telemetry: [identity, endpoint]
-  trigger: intel-report
-  applicability: universal
-  handoff: promote-to-detection
 ---
 
 # ADCS ESC1 certificate-template abuse hunt
