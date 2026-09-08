@@ -22,7 +22,7 @@ python -m huntmd convert  ../hunts/kerberoasting.md                 # hunt.md �
 python -m huntmd convert  ../hunts/kerberoasting.md --to cacao      # hunt.md → CACAO v2 playbook JSON
 python -m huntmd convert  ../my-hunt.definition.yaml                # definition → hunt.md (best-effort inverse)
 python -m huntmd convert  ../some-cacao-playbook.json               # CACAO → hunt.md (draft, TODO-marked)
-python -m huntmd convert  ../hunts/kerberoasting.md --to misp       # hunt.md → MISP event JSON (HUNT-EX tags + threat-hunt-* objects)
+python -m huntmd convert  ../hunts/kerberoasting.md --to misp --date 2026-09-08  # → MISP event JSON (pin the date so fixtures don't drift)
 python -m huntmd convert  ../hunts/kerberoasting.md --to misp --result ../examples/results/kerberoasting-run.yaml  # + threat-hunt-finding
 python -m huntmd convert  ../some-misp-event.json                   # MISP → hunt.md (exact via attachment, else draft)
 python -m huntmd convert  ../some-misp-event.json --split -o ../hunts/  # one file per threat-hunt-hypothesis (SPEC §3.8)
@@ -40,7 +40,7 @@ CI ([.github/workflows/lint.yml](.github/workflows/lint.yml)) runs the checks be
    **Compatibility rule:** a 0.5 hunt must lint with the same errors and warnings after your change — `check.py` asserts this against frozen copies in [tools/tests/fixtures/](tools/tests/fixtures/). New checks on 0.5-valid content are `info`, or live in `--profile quality`.
 2. **Round-trip must stay exact** for repo hunts: `md → cacao → md` preserves step kinds, slugs, targets, parameters and every edge. This is load-bearing — it's what the CACAO profile claims in [PROFILES.md](PROFILES.md).
 3. `python tools/tests/check.py` — the actual suite (stdlib only). Covers all of the above plus guardrails, confidence/`unavailable:` handling, result validation, and MISP (`md → misp → md` byte-exact via the attachment; objects-only events import as lint-clean drafts).
-4. **Live MISP check** (opt-in, needs an instance): `MISP_URL=… MISP_KEY=… python tools/tests/e2e_misp.py` — pushes both hunts, re-imports byte-exact, checks templates/taxonomy presence and `hunt-ex` tag search. Run it after touching `misp.py`'s object shapes; MISP drops malformed/unknown-template objects *silently*, so unit tests can't catch that class of bug.
+4. **Live MISP check** (opt-in, needs an instance): `MISP_URL=… MISP_KEY=… python tools/tests/e2e_misp.py` — pushes every hunt in `hunts/`, re-imports byte-exact, checks templates/taxonomy presence and `hunt-ex` tag search. Run it after touching `misp.py`'s object shapes; MISP drops malformed/unknown-template objects *silently*, so unit tests can't catch that class of bug.
 5. **Corpus check**: [examples/cacao-import/fetch-corpus.sh](examples/cacao-import/fetch-corpus.sh) pulls 49 real CACAO playbooks from six projects; all must import, parse and lint clean (332 steps preserved). Requires `gh` + network. The vendored conversions in [examples/cacao-import/](examples/cacao-import/) are the offline fixtures.
 
 ## Architecture

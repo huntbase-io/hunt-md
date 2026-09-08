@@ -19,7 +19,7 @@ hunt:                   # why this hunt exists and what happens after (SPEC §3.
     invisible to MFA. Running this on a cadence is the control for that gap.
   assets: [service accounts, Active Directory]
 references:
-  - name: MITRE ATT&CK T1558.003
+  - name: "MITRE ATT&CK T1558.003 — Steal or Forge Kerberos Tickets: Kerberoasting"
     url: https://attack.mitre.org/techniques/T1558/003/
 parameters:
   lookback: { type: duration, default: "14d" }

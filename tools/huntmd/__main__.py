@@ -176,10 +176,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     c.add_argument("-o", "--output", help="write to file instead of stdout (a directory with --split)")
     c.add_argument(
+        "--date",
+        metavar="YYYY-MM-DD",
+        help="with --to misp: pin the event date (default: the hunt's own `created:`, else today). "
+        "Pin it so re-exporting an unchanged hunt is byte-identical.",
+    )
+    c.add_argument(
         "--split",
         action="store_true",
         help="MISP input only: write one hunt.md per threat-hunt-hypothesis into -o "
-        "(hunt.md is one hypothesis per file; the parts are wired with series:/related:)",
+        "(hunt.md is one hypothesis per file; the parts are wired with series:/related:). "
+        "A document carrying several events writes all of them.",
     )
     c.set_defaults(func=_cmd_convert)
 

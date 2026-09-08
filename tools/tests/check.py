@@ -1019,6 +1019,68 @@ for path in hunts:
     _qi = [str(i) for i in validate_markdown(path.read_text(encoding="utf-8"), profile="quality") if i.level == "warn"]
     report(f"{path.name} passes --profile quality", not _qi, "; ".join(_qi[:2]))
 
+print("\nMISP hygiene (issue #11): detection, pinned date, galaxy + workflow tags, logsource targets, multi-event")
+report(
+    "a stray YAML with info/Object keys is no longer mistaken for an event",
+    not is_misp_event({"info": "my notes", "Object": ["a", "b"]})
+    and not is_misp_event({"info": "x", "Object": [{"not_a_name": 1}]})
+    and not is_misp_event({"hunt_result": {"hunt": "k"}, "info": "x", "Attribute": []}),
+)
+report(
+    "…while real events still are",
+    is_misp_event(_foreign)
+    and is_misp_event(_foreign["Event"])
+    and is_misp_event({"response": [_foreign]}),
+)
+_d1 = markdown_to_misp(_kb, date="2026-01-02")["Event"]["date"]
+report("--date pins the event date", _d1 == "2026-01-02")
+report(
+    "a hunt's own created: pins it without a flag",
+    markdown_to_misp(_kb.replace("tlp: green", "created: 2026-03-04\ntlp: green"))["Event"]["date"] == "2026-03-04",
+)
+_gt = {t["name"] for t in markdown_to_misp(_kb)["Event"]["Tag"]}
+report(
+    "the galaxy tag is emitted when a reference names the technique",
+    any(t.startswith("misp-galaxy:mitre-attack-pattern=") and "T1558.003" in t for t in _gt),
+    str(sorted(_gt)),
+)
+report(
+    "…and omitted rather than guessed when it does not",
+    not any("misp-galaxy" in t for t in {x["name"] for x in markdown_to_misp(_kb.replace(" — Steal or Forge Kerberos Tickets: Kerberoasting", ""))["Event"]["Tag"]}),
+)
+report("workflow:state mirrors the context status", 'workflow:state="incomplete"' in _gt)
+report(
+    "…and a concluded run reports complete",
+    'workflow:state="complete"' in {t["name"] for t in markdown_to_misp(_kb, result=_run)["Event"]["Tag"]},
+)
+from huntmd.misp import _logsource_target, find_events  # noqa: E402
+
+report(
+    "a sigma logsource names the source it needs, instead of guessing SIEM",
+    _logsource_target("logsource:\n  category: process_creation\n  product: windows\n") == ("Windows process creation", "endpoint")
+    and _logsource_target("logsource: {product: okta, service: okta}")[1] == "identity"
+    and _logsource_target("detection:\n  sel: {a: 1}") == (None, None),
+    str(_logsource_target("logsource:\n  category: process_creation\n  product: windows\n")),
+)
+_sig_ev = json.loads(json.dumps(_foreign))
+_sig_ev["Event"]["Object"] = [o for o in _sig_ev["Event"]["Object"] if o["name"] in ("threat-hunt-context", "threat-hunt-hypothesis", "sigma")]
+_sig_ev["Event"]["Object"][-1]["Attribute"][0]["value"] = "title: x\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel: {Image: a.exe}\n  condition: sel"
+_sig_pb = parse_markdown(misp_to_markdown(_sig_ev))
+report(
+    "…so the imported draft's target carries an endpoint category, not siem",
+    any(tg.get("category") == "endpoint" for tg in _sig_pb.meta["targets"].values()),
+    str(_sig_pb.meta["targets"]),
+)
+_two_events = {"response": [json.loads(json.dumps(_foreign)), {"Event": dict(json.loads(json.dumps(_foreign))["Event"], info="Second peer hunt", uuid="33333333-4444-5555-6666-777777777777")}]}
+report("find_events sees every event in a restSearch response", len(find_events(_two_events)) == 2)
+_two_files = misp_to_markdowns(_two_events)
+report(
+    "a multi-event document splits into a file per event, with unique names",
+    len(_two_files) == 2 and len({n for n, _ in _two_files}) == 2,
+    str([n for n, _ in _two_files]),
+)
+report("both files lint clean", not [str(i) for _, x in _two_files for i in validate_markdown(x, profile="format") if i.level == "error"])
+
 print("\nrun results (SPEC §12)")
 from huntmd.results import validate_result  # noqa: E402
 

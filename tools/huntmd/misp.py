@@ -509,6 +509,38 @@ def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, li
     return obj, tags
 
 
+#: `threat-hunt-context.status` → MISP's own ``workflow:state`` (HUNT-EX docs
+#: recommend mirroring it, so a peer can filter by how finished a hunt is).
+_STATUS_WORKFLOW = {
+    "planned": "incomplete",
+    "in progress": "ongoing",
+    "ongoing": "ongoing",
+    "concluded": "complete",
+    "complete": "complete",
+    "abandoned": "cancelled",
+}
+
+#: `T1649 — Steal or Forge Authentication Certificates` inside a reference name.
+_TECHNIQUE_WITH_NAME = re.compile(r"\b(T\d{4}(?:\.\d{3})?)\b\s*[—\-–:]\s*([A-Za-z][^|(\[]{2,80})")
+
+
+def _attack_pattern_names(meta: dict[str, Any]) -> dict[str, str]:
+    """technique id → its name, read out of the hunt's own ``references:``.
+
+    MISP's galaxy tag needs the technique *name*, which ``labels:`` doesn't
+    carry. Rather than vendor an ATT&CK table, read the name from a reference
+    the author already wrote (``MITRE ATT&CK T1649 — Steal or Forge …``).
+    """
+    names: dict[str, str] = {}
+    for ref in meta.get("references") or []:
+        blob = f"{ref.get('name', '')}" if isinstance(ref, dict) else str(ref)
+        for tid, name in _TECHNIQUE_WITH_NAME.findall(blob):
+            cleaned = name.strip().rstrip(".").strip()
+            if cleaned and tid.upper() not in names:
+                names[tid.upper()] = cleaned
+    return names
+
+
 def _event_tags(pb: Playbook, misp: dict, result_tags: list[dict]) -> list[dict]:
     tags: list[dict] = []
     tlp = _tlp(pb.meta)
@@ -531,6 +563,15 @@ def _event_tags(pb: Playbook, misp: dict, result_tags: list[dict]) -> list[dict]
         if ql not in seen_langs:
             seen_langs.append(ql)
             tags.append(_tag("query-language", ql))
+    # MISP's own galaxy tag, where the technique name is knowable.
+    names = _attack_pattern_names(pb.meta)
+    for tid in _attack_ids(pb.meta):
+        if tid in names:
+            tags.append({"name": f'misp-galaxy:mitre-attack-pattern="{names[tid]} - {tid}"'})
+    status = str(misp.get("status") or ("Concluded" if result_tags else "Planned"))
+    workflow = _STATUS_WORKFLOW.get(status.strip().lower())
+    if workflow:
+        tags.append({"name": f'workflow:state="{workflow}"'})
     tags.extend(result_tags)
     for extra in misp.get("tags") or []:
         tags.append({"name": str(extra)})
@@ -593,6 +634,9 @@ def playbook_to_misp(
     )
     attachment.pop("object_relation")
 
+    # A pinned date keeps re-exports byte-stable (fixtures drifted daily on
+    # today's date). Explicit argument wins, then the hunt's own `created:`.
+    stamp = date or str(pb.meta.get("date") or pb.meta.get("created") or "").strip()[:10] or _now().date().isoformat()
     tlp = _tlp(pb.meta) or "amber"
     distribution = misp.get("distribution")
     if distribution is None:
@@ -602,7 +646,7 @@ def playbook_to_misp(
     event: dict[str, Any] = {
         "uuid": str(ns),
         "info": pb.name or "Untitled hunt",
-        "date": date or _now().date().isoformat(),
+        "date": stamp,
         "distribution": str(distribution),
         "threat_level_id": str(threat),
         "analysis": "2" if result else "0",
@@ -656,9 +700,34 @@ def markdown_to_misp(text: str, *, result: dict | None = None, date: str | None 
 
 
 def is_misp_event(defn: Any) -> bool:
-    """A MISP event: ``{"Event": {...}}`` or a bare event with ``Object``/``Attribute`` and ``info``."""
+    """A MISP event: ``{"Event": {...}}`` or a bare event that really looks like one."""
     ev = _find_event(defn)
     return ev is not None
+
+
+#: Keys that make a document something else entirely — a run result, a Huntbase
+#: definition, a CACAO playbook. Seeing one means "not a MISP event", whatever
+#: else the document happens to contain.
+_NOT_AN_EVENT = ("hunt_result", "nodes", "workflow", "playbook_types")
+
+
+def _looks_like_bare_event(d: dict[str, Any]) -> bool:
+    """A bare event (no ``Event`` wrapper) needs more than an ``info`` key.
+
+    ``info`` + ``Object``/``Attribute`` alone matched a stray YAML that happened
+    to use those names, so require the collections to hold things shaped like
+    MISP objects/attributes, and ``info`` to be text.
+    """
+    if any(k in d for k in _NOT_AN_EVENT) or not isinstance(d.get("info"), str):
+        return False
+    objects = d.get("Object")
+    attributes = d.get("Attribute")
+    if isinstance(objects, list) and objects:
+        return all(isinstance(o, dict) and isinstance(o.get("name"), str) for o in objects)
+    if isinstance(attributes, list) and attributes:
+        return all(isinstance(a, dict) and isinstance(a.get("type"), str) for a in attributes)
+    # Empty collections are legal on a real event, but only alongside a uuid.
+    return (isinstance(objects, list) or isinstance(attributes, list)) and isinstance(d.get("uuid"), str)
 
 
 def _find_event(defn: Any) -> dict[str, Any] | None:
@@ -668,9 +737,19 @@ def _find_event(defn: Any) -> dict[str, Any] | None:
         return defn["Event"]
     if isinstance(defn.get("response"), list) and defn["response"] and isinstance(defn["response"][0], dict):
         return _find_event(defn["response"][0])
-    if "info" in defn and ("Object" in defn or "Attribute" in defn):
+    if _looks_like_bare_event(defn):
         return defn
     return None
+
+
+def find_events(defn: Any) -> list[dict[str, Any]]:
+    """Every event in the document — a ``restSearch`` response carries many."""
+    if isinstance(defn, dict) and isinstance(defn.get("response"), list):
+        out = [ev for item in defn["response"] if (ev := _find_event(item)) is not None]
+        if out:
+            return out
+    ev = _find_event(defn)
+    return [ev] if ev is not None else []
 
 
 def _obj_attrs(obj: dict) -> dict[str, list[str]]:
@@ -699,6 +778,58 @@ def misp_to_source(defn: Any) -> str | None:
             except (ValueError, UnicodeDecodeError):
                 return None
     return None
+
+
+#: A sigma ``logsource`` → (target name, hunt.md target category). Categories
+#: are the SPEC §6 ones, so an imported draft resolves to a telemetry plane
+#: instead of guessing "siem" for everything.
+_LOGSOURCE_CATEGORY = {
+    "process_creation": "endpoint", "image_load": "endpoint", "file_event": "endpoint",
+    "registry_set": "endpoint", "registry_add": "endpoint", "registry_event": "endpoint",
+    "ps_script": "endpoint", "driver_load": "endpoint", "create_remote_thread": "endpoint",
+    "dns_query": "network", "network_connection": "network", "firewall": "network", "proxy": "network",
+    "webserver": "network",
+}
+_LOGSOURCE_PRODUCT = {
+    "windows": "endpoint", "linux": "endpoint", "macos": "endpoint",
+    "azure": "cloud-control-plane", "aws": "cloud-control-plane", "gcp": "cloud-control-plane",
+    "m365": "saas", "okta": "identity", "onelogin": "identity", "github": "saas", "google_workspace": "saas",
+    "zeek": "network", "cisco": "network", "paloalto": "network",
+}
+
+
+def _logsource_target(sigma_body: str) -> tuple[str | None, str | None]:
+    """Read a sigma rule's ``logsource`` and name the source it needs.
+
+    The importer used to guess "SIEM"/`category: siem` for every sigma object;
+    the rule itself says which product and telemetry it reads.
+    """
+    block: dict[str, str] = {}
+    in_logsource = False
+    for raw in (sigma_body or "").splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if re.match(r"^logsource\s*:", stripped):
+            in_logsource = True
+            inline = stripped.split(":", 1)[1].strip()
+            for k, v in re.findall(r"([a-z_]+)\s*:\s*([A-Za-z0-9_./-]+)", inline):
+                block[k] = v
+            continue
+        if in_logsource:
+            if not raw.startswith((" ", "\t")):
+                break
+            m = re.match(r"^\s+([a-z_]+)\s*:\s*(.+)$", raw)
+            if m:
+                block[m.group(1)] = m.group(2).strip().strip("'\"")
+    if not block:
+        return None, None
+    product = (block.get("product") or "").lower()
+    category = (block.get("category") or "").lower()
+    service = (block.get("service") or "").lower()
+    plane = _LOGSOURCE_CATEGORY.get(category) or _LOGSOURCE_PRODUCT.get(product)
+    name = " ".join(w for w in (product.title() or None, (category or service).replace("_", " ") or None) if w).strip()
+    return (name or product.title() or None), plane
 
 
 def misp_to_playbook(defn: Any, *, hypothesis: int = 0) -> Playbook:
@@ -763,7 +894,7 @@ def misp_to_playbook(defn: Any, *, hypothesis: int = 0) -> Playbook:
     targets: dict[str, dict[str, Any]] = {}
     ds_slug: dict[str, str] = {}
 
-    def target_for(name: str | None, platform: str | None) -> str:
+    def target_for(name: str | None, platform: str | None, *, category: str | None = None) -> str:
         key = name or platform or "source"
         if key in ds_slug:
             return ds_slug[key]
@@ -771,7 +902,8 @@ def misp_to_playbook(defn: Any, *, hypothesis: int = 0) -> Playbook:
         base, n = slug, 2
         while slug in targets:
             slug, n = f"{base}-{n}", n + 1
-        t: dict[str, Any] = {"category": "siem", "name": key}  # category is a guess — flagged in the TODO
+        # `category` is a guess unless a sigma logsource told us — flagged in the TODO.
+        t: dict[str, Any] = {"category": category or "siem", "name": key}
         targets[slug] = t
         ds_slug[key] = slug
         return slug
@@ -828,7 +960,14 @@ def misp_to_playbook(defn: Any, *, hypothesis: int = 0) -> Playbook:
                     owner.portable = {"language": name, "body": body}
                     owner.attrs.setdefault("role", "detection-candidate")
                     continue
-            add_query(_first(a, name_rel) or f"{name}-rule", name, body, target_for(fallback_target, None), _first(a, "context"))
+            source_name, source_category = _logsource_target(body) if name == "sigma" else ("Endpoint", "endpoint")
+            add_query(
+                _first(a, name_rel) or f"{name}-rule",
+                name,
+                body,
+                target_for(source_name or fallback_target, None, category=source_category),
+                _first(a, "context"),
+            )
 
     if not steps:
         for ds in context.get("data-source") or ["source"]:
@@ -937,17 +1076,29 @@ def misp_to_markdowns(defn: Any) -> list[tuple[str, str]]:
     linked files rather than one lossy document. An event with the exact source
     attached (or a single hypothesis) yields one file, unchanged.
     """
-    source = misp_to_source(defn)
-    if source is not None:
-        pb = parse_markdown(source)
-        return [(f"{_slug(pb)}.md", source)]
-    n = hypothesis_count(defn)
     out: list[tuple[str, str]] = []
-    for i in range(n):
-        pb = misp_to_playbook(defn, hypothesis=i)
-        series = pb.meta.get("series") or {}
-        name = f"{series.get('slug')}-h{series.get('index')}.md" if n > 1 and series else f"{_slug(pb)}.md"
-        out.append((name, playbook_to_markdown(pb)))
+    taken: set[str] = set()
+
+    def unique(name: str) -> str:
+        stem, n = name[:-3], 2
+        while name in taken:
+            name, n = f"{stem}-{n}.md", n + 1
+        taken.add(name)
+        return name
+
+    # A restSearch response carries many events; each becomes its own file(s).
+    for event in find_events(defn) or [None]:
+        wrapped: Any = {"Event": event} if event is not None else defn
+        source = misp_to_source(wrapped)
+        if source is not None:
+            out.append((unique(f"{_slug(parse_markdown(source))}.md"), source))
+            continue
+        n = hypothesis_count(wrapped)
+        for i in range(n):
+            pb = misp_to_playbook(wrapped, hypothesis=i)
+            series = pb.meta.get("series") or {}
+            name = f"{series.get('slug')}-h{series.get('index')}.md" if n > 1 and series else f"{_slug(pb)}.md"
+            out.append((unique(name), playbook_to_markdown(pb)))
     return out
 
 

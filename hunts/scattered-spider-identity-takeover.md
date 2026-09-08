@@ -38,6 +38,14 @@ blind_spots:            # what each dead end costs (SPEC §3.5)
 references:
   - name: CISA AA23-320A — Scattered Spider (updated 2025-07-29)
     url: https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
+  - name: MITRE ATT&CK T1621 — Multi-Factor Authentication Request Generation
+    url: https://attack.mitre.org/techniques/T1621/
+  - name: MITRE ATT&CK T1219 — Remote Access Software
+    url: https://attack.mitre.org/techniques/T1219/
+  - name: "MITRE ATT&CK T1114.002 — Email Collection: Remote Email Collection"
+    url: https://attack.mitre.org/techniques/T1114/002/
+  - name: "MITRE ATT&CK T1484.002 — Domain or Tenant Policy Modification: Trust Modification"
+    url: https://attack.mitre.org/techniques/T1484/002/
 parameters:
   lookback:  { type: duration, default: "10d" }
   rmm_tools:                  # SPEC §3.7: typed list + where it came from, so it can be refreshed
