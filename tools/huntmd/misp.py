@@ -106,6 +106,14 @@ _DISPOSITION_OUTCOME = {
     "inconclusive": ("inconclusive", "Inconclusive"),
 }
 
+#: HUNT-EX outcome → the finding object's own ``outcome`` label.
+_OUTCOME_OBJECT_LABEL = {
+    "hypothesis-confirmed-malicious": "True Positive",
+    "hypothesis-confirmed-benign": "Benign True Positive",
+    "hypothesis-not-confirmed": "False Positive",
+    "inconclusive": "Inconclusive",
+}
+
 _ATTACK = re.compile(r"^attack\.(t\d{4}(?:\.\d{3})?)$", re.I)
 _TLP_TAG = re.compile(r"^tlp:(clear|white|green|amber|amber\+strict|red)$", re.I)
 _HUNT_EX_TAG = re.compile(rf'^{TAXONOMY}:([a-z-]+)="([^"]+)"$')
@@ -290,9 +298,12 @@ def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None
     attrs.extend(a("tool", product) for product in tools)
     for c in dict.fromkeys(misp.get("contributors") or misp.get("contributor") or []):
         attrs.append(a("contributor", c))
-    for rel in ("period-start", "period-end"):
-        if misp.get(rel):
-            attrs.append(a(rel, misp[rel], type_="datetime"))
+    period = ((result or {}).get("hunt_result") or result or {}).get("period") if result else None
+    period = period if isinstance(period, dict) else {}
+    for rel, key in (("period-start", "start"), ("period-end", "end")):
+        value = period.get(key) or misp.get(rel)
+        if value:
+            attrs.append(a(rel, value, type_="datetime"))
     return _object("threat-hunt-context", ns, "context", attrs)
 
 
@@ -366,8 +377,20 @@ def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, li
     hunt_ex_outcome, obj_outcome = _DISPOSITION_OUTCOME.get(disposition, ("inconclusive", "Inconclusive"))
     if disposition == "benign" and not (r.get("evidence_summary") or {}).get("benign_supporting"):
         hunt_ex_outcome = "hypothesis-not-confirmed"
+    # A recorded outcome (SPEC §12.3) beats the disposition heuristic — the
+    # runtime or analyst knows whether "not confirmed" or "confirmed benign".
+    recorded = str(r.get("outcome") or "")
+    outcome_note = ""
+    if recorded in _HUNT_EX["outcome"]:
+        hunt_ex_outcome = recorded
+        obj_outcome = _OUTCOME_OBJECT_LABEL.get(recorded, obj_outcome)
+    else:
+        outcome_note = " Outcome inferred from the disposition (no outcome: recorded)."
 
-    parts = [f"Disposition: {disposition} (confidence: {r.get('confidence', '?')}); run {r.get('run', '?')}."]
+    parts = [f"Disposition: {disposition} (confidence: {r.get('confidence', '?')}); run {r.get('run', '?')}.{outcome_note}"]
+    period = r.get("period") if isinstance(r.get("period"), dict) else {}
+    if period.get("start") or period.get("end"):
+        parts.append(f"Period examined: {period.get('start', '?')} → {period.get('end', '?')}.")
     for sr in r.get("step_results") or []:
         exp = str(sr.get("explanation") or "").strip()
         if exp:
@@ -392,8 +415,12 @@ def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, li
     obj = _object("threat-hunt-finding", ns, f"finding:{r.get('run', '')}", attrs, comment=f"run {r.get('run', '')}")
 
     tags = [_tag("outcome", hunt_ex_outcome), _tag("content", "finding")]
-    if missing:
-        tags.append(_tag("byproduct", "data-source-gap"))
+    byproducts = [str(b) for b in (r.get("byproducts") or []) if str(b) in _HUNT_EX["byproduct"]]
+    if missing and "data-source-gap" not in byproducts:
+        byproducts.append("data-source-gap")
+    tags.extend(_tag("byproduct", b) for b in byproducts)
+    if str(r.get("handoff") or "") in _HUNT_EX["handoff"]:
+        tags.append(_tag("handoff", str(r["handoff"])))
     return obj, tags
 
 

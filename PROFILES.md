@@ -308,14 +308,19 @@ off-vocabulary, when a query language has no HUNT-EX mapping, when no target
 maps to a telemetry plane, or when there is no ATT&CK label — each is something
 a peer would filter on and fail to find.
 
-**Findings and outcomes.** A run result's `disposition` maps to
-`hunt-ex:outcome` conservatively: `malicious` → `hypothesis-confirmed-malicious`;
-`benign`/`potentially_benign` → `hypothesis-confirmed-benign` (a `benign` with no
-`benign_supporting` evidence — invalid under §12.2 anyway — degrades to
-`hypothesis-not-confirmed`); `suspicious` and `inconclusive` → `inconclusive`,
-because "suspicious" is precisely *not* a confirmed hypothesis. Any
-`telemetry_coverage.missing` entry adds `hunt-ex:byproduct="data-source-gap"` —
-the hunt has told you what it couldn't look at, and that is worth sharing.
+**Findings and outcomes.** A run result that records `outcome`, `byproducts`,
+`handoff` and `period` (SPEC §12.3) exports them as-is: `hunt-ex:outcome=`,
+one `hunt-ex:byproduct=` per entry, `hunt-ex:handoff=`, and
+`period-start`/`period-end` on the context object. Without a recorded
+`outcome`, the exporter falls back to a conservative mapping from
+`disposition` and says so in the finding's `conclusion`: `malicious` →
+`hypothesis-confirmed-malicious`; `benign`/`potentially_benign` →
+`hypothesis-confirmed-benign` (a `benign` with no `benign_supporting` evidence
+— invalid under §12.2 anyway — degrades to `hypothesis-not-confirmed`);
+`suspicious` and `inconclusive` → `inconclusive`, because "suspicious" is
+precisely *not* a confirmed hypothesis. Any `telemetry_coverage.missing` entry
+adds `hunt-ex:byproduct="data-source-gap"` whether or not it was listed — the
+hunt has told you what it couldn't look at, and that is worth sharing.
 
 **Producing it.** Implemented in [`tools/huntmd/misp.py`](./tools/huntmd/misp.py):
 

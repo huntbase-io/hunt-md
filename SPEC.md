@@ -706,6 +706,12 @@ hunt_result:
     missing:
       - target: edr
         impact: "process ancestry for the requesting hosts was not checked"
+        blind_spot: no-edr-ancestry   # the §3.5 record this gap is an instance of
+
+  outcome: inconclusive          # §12.3 — the programme-level answer
+  byproducts: [data-source-gap]
+  handoff: keep-as-periodic-hunt
+  period: { start: 2026-07-17T00:00:00Z, end: 2026-07-31T00:00:00Z }
 
   actions_taken: ["queried SIEM for 4769 events", "clustered by account"]
   hunting_recommendations: ["same accounts across other forests"]
@@ -740,6 +746,33 @@ tell "we checked and it's fine" from "we never looked."
 
 These are checkable: `huntmd validate <result.yaml>` lints a result document
 against them, the same way it lints a hunt.
+
+### 12.3 Outcome, byproducts, handoff, period
+
+`disposition` is what the run found; the things a hunt *programme* shares are
+different questions, and a sharing profile that guesses them from the
+disposition guesses wrong (`suspicious` is not a confirmed hypothesis; "not
+confirmed" and "confirmed benign" are not inferable). Four optional
+closed-vocabulary fields record them. The vocabularies are HUNT-EX's, so they
+share without translation.
+
+| field | values | meaning |
+|---|---|---|
+| `outcome` | `hypothesis-confirmed-malicious`, `hypothesis-confirmed-benign`, `hypothesis-not-confirmed`, `inconclusive` | what the run says about the hypothesis |
+| `byproducts` | list of `detection-gap`, `data-source-gap`, `tooling-gap`, `process-gap`, `vuln-or-misconfig` | what the run produced besides an answer |
+| `handoff` | `promote-to-detection`, `keep-as-periodic-hunt`, `retire`, `escalated-to-ir`, `handed-to-detection-engineering` | the per-run decision about what happens next |
+| `period` | `{ start, end }`, ISO-8601 | the window actually examined — `lookback` is a parameter, not a record |
+
+Rules: `outcome: hypothesis-confirmed-benign` needs `benign_supporting`
+evidence (mirrors 12.2 rule 1); `disposition: malicious` with
+`outcome: hypothesis-not-confirmed` is an error; `telemetry_coverage.missing`
+with a `byproducts` list that omits `data-source-gap` warns. A
+`missing[].blind_spot` names the hunt's §3.5 record the gap is an instance of,
+so the gaps a runtime actually hit aggregate against the ones the author
+anticipated.
+
+Results stay out of the hunt file. A hunt is a playbook; `last_run:` or a run
+history belongs in a results store, not in frontmatter.
 
 ## 13. Linting (against a target profile)
 A hunt is linted for: flow reachability; variable def-before-use; every query has

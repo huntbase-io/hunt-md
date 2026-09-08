@@ -63,6 +63,12 @@ hunt_result:
           Process ancestry for the requesting hosts was not examined, so an
           approved scanner could not be ruled out as the source.
 
+  # SPEC §12.3 — the programme-level answer, recorded rather than inferred.
+  outcome: inconclusive          # suspicious ≠ confirmed; nothing benign explained it either
+  byproducts: [data-source-gap]  # EDR was never consulted
+  handoff: keep-as-periodic-hunt
+  period: { start: 2026-07-17T00:00:00Z, end: 2026-07-31T09:00:00Z }
+
   actions_taken:
     - queried SIEM for event 4769 with ticket encryption 0x17 over 14 days
     - clustered requests by account and source address

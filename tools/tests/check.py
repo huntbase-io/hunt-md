@@ -711,6 +711,27 @@ report(
     "bad vocabulary is rejected",
     any("not in" in i.message for i in validate_result({"hunt_result": {"hunt": "k", "disposition": "probably-fine"}})),
 )
+# §12.3 outcome / byproducts / handoff / period
+_r123 = copy.deepcopy(good)
+_r123["hunt_result"].update({"outcome": "hypothesis-confirmed-benign", "byproducts": ["detection-gap"], "handoff": "retire", "period": {"start": "2026-07-01T00:00:00Z", "end": "2026-07-14T00:00:00Z"}})
+report("§12.3 fields lint clean when well-formed", not [i for i in validate_result(_r123) if i.level == "error"], str(validate_result(_r123)))
+_bad_o = copy.deepcopy(_r123); _bad_o["hunt_result"]["outcome"] = "meh"
+report("outcome off-vocabulary is an error", any("outcome 'meh'" in i.message for i in validate_result(_bad_o)))
+_cb = copy.deepcopy(_r123); _cb["hunt_result"]["evidence_summary"] = {"benign_supporting": []}; _cb["hunt_result"]["disposition"] = "inconclusive"
+report("confirmed-benign outcome needs benign evidence", any("confirmed-benign hypothesis needs" in i.message for i in validate_result(_cb)))
+_mal = copy.deepcopy(_r123); _mal["hunt_result"].update({"disposition": "malicious", "outcome": "hypothesis-not-confirmed"})
+report("malicious + not-confirmed is contradictory", any("contradict" in i.message or "malicious finding confirms" in i.message for i in validate_result(_mal)))
+_per = copy.deepcopy(_r123); _per["hunt_result"]["period"] = {"start": "2026-07-14T00:00:00Z", "end": "2026-07-01T00:00:00Z"}
+report("period start after end is an error", any("after period.end" in i.message for i in validate_result(_per)))
+_gap = copy.deepcopy(_r123); _gap["hunt_result"]["telemetry_coverage"] = {"missing": [{"target": "edr", "impact": "x", "blind_spot": "no-edr"}]}
+report("missing telemetry without data-source-gap byproduct warns", any("data-source-gap" in i.message for i in validate_result(_gap)))
+_ev123 = markdown_to_misp(_kb, result=_r123)["Event"]
+_t123 = {t["name"] for t in _ev123["Tag"]}
+report("recorded outcome/byproducts/handoff drive the finding tags (no heuristic)", {'hunt-ex:outcome="hypothesis-confirmed-benign"', 'hunt-ex:byproduct="detection-gap"', 'hunt-ex:handoff="retire"'} <= _t123, str(sorted(_t123)))
+_ctx123 = next(o for o in _ev123["Object"] if o["name"] == "threat-hunt-context")
+report("period lands on the context object", any(a["object_relation"] == "period-start" and a["value"].startswith("2026-07-01") for a in _ctx123["Attribute"]))
+_run_issues = validate_result(_run)
+report("examples/results/kerberoasting-run.yaml lints clean with §12.3 fields", not [i for i in _run_issues if i.level == "error"], str(_run_issues))
 
 print("\nparser robustness + lint completeness")
 _BT, _BT4 = "`" * 3, "`" * 4
