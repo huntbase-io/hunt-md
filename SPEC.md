@@ -1,6 +1,6 @@
 # hunt.md — specification
 
-**Version:** 0.5 (draft) · **Status:** Working proposal
+**Version:** 0.6 (draft) · **Status:** Working proposal · **Changes:** see `CHANGELOG.md`
 **License of this document:** see `LICENSE`
 
 `hunt.md` is an **open, portable, human-first Markdown format for threat-hunting
@@ -487,8 +487,8 @@ cloud-workload | saas | ot-ics`:
 - stated explicitly on a store, which may hold several:
   `siem: { category: siem, telemetry: [identity, endpoint], name: SIEM }`.
 
-A linter warns when a query's target resolves to no plane, and when a stated
-plane is off-vocabulary. Planes feed data-requirement checks, run-result
+A linter notes (info) when a query's target resolves to no plane — a warning
+under the `quality` profile — and warns when a stated plane is off-vocabulary. Planes feed data-requirement checks, run-result
 `telemetry_coverage` (§12) and sharing tags (PROFILES §3) without any
 profile-specific override.
 

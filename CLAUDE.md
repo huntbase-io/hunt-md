@@ -35,7 +35,8 @@ python -m huntmd validate ../examples/results/run.yaml               # lint a ru
 
 CI ([.github/workflows/lint.yml](.github/workflows/lint.yml)) runs the checks below on every PR, and a separate job enforces the publication boundary (`--max-tlp green` — this repo is public). After touching `core.py`, `cacao.py`, `misp.py` or `results.py`:
 
-1. `validate` + `convert` (all three targets) over both files in [hunts/](hunts/).
+1. `validate` + `convert` (all three targets) over every file in [hunts/](hunts/).
+   **Compatibility rule:** a 0.5 hunt must lint with the same errors and warnings after your change — `check.py` asserts this against frozen copies in [tools/tests/fixtures/](tools/tests/fixtures/). New checks on 0.5-valid content are `info`, or live in `--profile quality`.
 2. **Round-trip must stay exact** for repo hunts: `md → cacao → md` preserves step kinds, slugs, targets, parameters and every edge. This is load-bearing — it's what the CACAO profile claims in [PROFILES.md](PROFILES.md).
 3. `python tools/tests/check.py` — the actual suite (stdlib only). Covers all of the above plus guardrails, confidence/`unavailable:` handling, result validation, and MISP (`md → misp → md` byte-exact via the attachment; objects-only events import as lint-clean drafts).
 4. **Live MISP check** (opt-in, needs an instance): `MISP_URL=… MISP_KEY=… python tools/tests/e2e_misp.py` — pushes both hunts, re-imports byte-exact, checks templates/taxonomy presence and `hunt-ex` tag search. Run it after touching `misp.py`'s object shapes; MISP drops malformed/unknown-template objects *silently*, so unit tests can't catch that class of bug.

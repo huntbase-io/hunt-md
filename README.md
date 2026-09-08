@@ -4,8 +4,8 @@
 
 **An open, portable Markdown format for threat-hunting playbooks.**
 
-[![Spec](https://img.shields.io/badge/spec-v0.5%20draft-blue)](./SPEC.md)
-[![Profiles](https://img.shields.io/badge/profiles-Huntbase%20%7C%20CACAO%20v2%20%7C%20docs-6f42c1)](./PROFILES.md)
+[![Spec](https://img.shields.io/badge/spec-v0.6%20draft-blue)](./SPEC.md)
+[![Profiles](https://img.shields.io/badge/profiles-Huntbase%20%7C%20CACAO%20v2%20%7C%20MISP%20%7C%20docs-6f42c1)](./PROFILES.md)
 [![Python](https://img.shields.io/badge/tooling-python%20%E2%89%A5%203.10-3776ab)](./tools)
 [![License](https://img.shields.io/badge/license-see%20LICENSE-lightgrey)](./LICENSE)
 
@@ -140,8 +140,9 @@ See [`tools/README.md`](./tools/README.md) for the full CLI.
 
 ## Status
 
-**Draft format — SPEC v0.5.** Evolving in the open. See [`SPEC.md`](./SPEC.md) §1
-for design principles and [`CONTRIBUTING.md`](./CONTRIBUTING.md) to help.
+**Draft format — SPEC v0.6.** Evolving in the open. See [`SPEC.md`](./SPEC.md) §1
+for design principles, [`CHANGELOG.md`](./CHANGELOG.md) for what changed and
+what stayed compatible, and [`CONTRIBUTING.md`](./CONTRIBUTING.md) to help.
 
 ## License
 

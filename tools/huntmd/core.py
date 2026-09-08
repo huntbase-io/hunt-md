@@ -1166,7 +1166,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_guardrails(pb)
     issues += _check_variables(pb)
     issues += _check_hunt_block(pb)
-    issues += _check_telemetry(pb)
+    issues += _check_telemetry(pb, profile)
     issues += _check_scenario(pb, profile)
     issues += _check_blind_spots(pb, profile)
     issues += _check_query_contract(pb)
@@ -1581,10 +1581,19 @@ def _check_silence(pb: Playbook) -> list[Issue]:
     return issues
 
 
-def _check_telemetry(pb: Playbook) -> list[Issue]:
-    """Every data-source target a query reads should resolve to a telemetry plane (SPEC §6)."""
+def _check_telemetry(pb: Playbook, profile: str = "huntbase") -> list[Issue]:
+    """Every data-source target a query reads should resolve to a telemetry plane (SPEC §6).
+
+    A store with no plane is an *info* under the default profiles — a 0.5 hunt
+    must lint with the same warnings it had (CHANGELOG, compatibility rule 1) —
+    and a warning under ``quality``. A legacy ``misp.telemetry`` override counts
+    as declared.
+    """
     issues: list[Issue] = []
     targets = pb.meta.get("targets") or {}
+    legacy = pb.meta.get("misp")
+    if isinstance(legacy, dict) and legacy.get("telemetry"):
+        return issues
     for slug, t in targets.items():
         if not isinstance(t, dict) or not _is_data_source(t):
             continue
@@ -1599,7 +1608,7 @@ def _check_telemetry(pb: Playbook) -> list[Issue]:
     for slug in unresolved:
         issues.append(
             Issue(
-                "warn",
+                "warn" if profile == "quality" else "info",
                 "",
                 f"target {slug}: category '{targets[slug].get('category')}' names a store, not a telemetry plane — "
                 f"add telemetry: [{'|'.join(TELEMETRY_PLANES)}] so data requirements are checkable",

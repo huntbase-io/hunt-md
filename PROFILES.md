@@ -413,6 +413,7 @@ a generation pipeline, a curated library or a PR gate turns them on.
 | an `unavailable:` branch that names no `blind_spot` (SPEC §3.5) | the dead end has no recorded cost |
 | fewer than two `scenario` stages `covered` (SPEC §3.4) | a one-stage hunt is a rule |
 | `verified_at` older than 180 days (SPEC §5.5) | the verification claim is folklore |
+| a query target that resolves to no telemetry plane (SPEC §6) | data requirements are not checkable (an info under the default profiles) |
 
 All warnings; the exit code is unaffected. The repository's own hunts pass it,
 and `tools/tests/check.py` keeps them passing.

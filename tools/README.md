@@ -40,7 +40,7 @@ huntmd convert  my-hunt.misp.json
 # CACAO playbook (v1.x or v2.0) → hunt.md; the input format is detected by shape
 huntmd convert  some-playbook.json -o hunts/imported.md
 
-# lint against a profile (default: huntbase; 'format' = neutral spec; 'cacao' = interchange; 'misp' = HUNT-EX classifiability)
+# lint against a profile (default: huntbase; 'format' = neutral spec; 'cacao' = interchange; 'misp' = HUNT-EX classifiability; 'quality' = opt-in "more than a rule" rules)
 huntmd validate hunts/my-hunt.md
 huntmd validate hunts/my-hunt.md --profile format
 
@@ -59,7 +59,7 @@ sub-playbook `run:`, `switch:`, runtime `$var` dataflow) with the substitution
 it will apply. The `cacao` profile adds no restrictions of its own: every
 construct exports, so a hunt clean at `format` level is clean for interchange.
 
-It also enforces the v0.5 safety rules: guardrail keys and values (SPEC §8.1),
+It also enforces the safety rules: guardrail keys and values (SPEC §8.1),
 a warning on any guardrail relaxed from its default, a warning on numeric `if~:`
 confidence (prefer ordinal), and an error when `unavailable: → end` would close a
 hunt on telemetry it never examined.

@@ -282,6 +282,27 @@ report(
     markdown_to_cacao(_unknown)["x_hunt"]["frontmatter"]["private_ext"] == "verbatim",
 )
 
+print("\nbackward compatibility — frozen 0.5 hunts lint with the same errors and warnings (CHANGELOG rule 1)")
+# These are the repo hunts exactly as they were at 0.5. New tooling may add
+# info-level notes; it must not add or remove an error or a warning.
+_EXPECTED_05 = {
+    ("kerberoasting-0.5.md", "format"): [],
+    ("kerberoasting-0.5.md", "huntbase"): ["route-by-verdict: switch: compiles to chained binary checkpoints on Huntbase"],
+    ("scattered-spider-identity-takeover-0.5.md", "format"): [],
+    ("scattered-spider-identity-takeover-0.5.md", "huntbase"): [],
+}
+for (fname, prof), expected in _EXPECTED_05.items():
+    fx = ROOT / "tools" / "tests" / "fixtures" / fname
+    got = [f"{i.slug}: {i.message}" for i in validate_markdown(fx.read_text(encoding="utf-8"), profile=prof) if i.level in ("error", "warn")]
+    report(f"{fname} [{prof}] unchanged errors/warnings", got == expected, f"{got}")
+    # …and still converts + round-trips
+    try:
+        _rt = parse_markdown(cacao_to_markdown(markdown_to_cacao(fx.read_text(encoding="utf-8"))))
+        ok = bool(_rt.steps)
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+    report(f"{fname} still converts", ok)
+
 print("\nsession-derived export — UUID ids must render as readable slugs")
 # A Huntbase session-derived definition carries DB UUIDs as node ids (not
 # authored slugs). The export must key headings + transitions off the label so
@@ -511,7 +532,8 @@ _good_hb = _hb.format(trig="crown-jewel", rb="2027-01-01", tele=", telemetry: [i
 report("well-formed hunt: block + declared telemetry lints clean", not [i for i in validate_markdown(_good_hb, profile="format") if i.level != "info"], str(validate_markdown(_good_hb, profile="format")))
 report("hunt.trigger off-vocabulary warns (never rejects)", any(i.level == "warn" and "hunt.trigger" in i.message for i in validate_markdown(_hb.format(trig="vibes", rb="2027-01-01", tele=", telemetry: [identity]"), profile="format")))
 report("hunt.review_by must be an ISO date", any("review_by" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="soon", tele=", telemetry: [identity]"), profile="format")))
-report("a siem target with no telemetry plane warns", any("names a store" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=""), profile="format")))
+report("a siem target with no telemetry plane is an info under the default profile", any(i.level == "info" and "names a store" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=""), profile="format")))
+report("…and a warning under --profile quality", any(i.level == "warn" and "names a store" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=""), profile="quality")))
 report("an off-vocabulary plane warns", any("telemetry 'mainframe'" in i.message for i in validate_markdown(_hb.format(trig="crown-jewel", rb="2027-01-01", tele=", telemetry: [mainframe]"), profile="format")))
 report("hunt: classification drives the hunt-ex tags", {'hunt-ex:trigger="crown-jewel"', 'hunt-ex:handoff="promote-to-detection"', 'hunt-ex:telemetry="identity"'} <= {t["name"] for t in markdown_to_misp(_good_hb)["Event"]["Tag"]})
 report("hunt: block reaches the definition first-class", markdown_to_definition(_good_hb)["hunt"]["meta"]["hunt"]["trigger"] == "crown-jewel")
