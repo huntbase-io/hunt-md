@@ -47,6 +47,7 @@ attachment (†) and the objects hold what HUNT-EX makes searchable.
 |---|---|---|---|---|---|
 | `query` step | ✍️ one fenced block | ✅ runs on connectors | 📦 `x-org-query` * | 📦 `threat-hunt-query` | 📄 rendered |
 | `collection` step | ✍️ ` ```collect ` | ✅ runs | 📦 command | † | 📄 |
+| agent `context` budget / `cite` (§8.2) | ✍️ `{step, rows}`, `cite:` | ✅ honours the budget | 📦 on the directive * | † | 📄 |
 | `agent` step | ✍️ ` ```agent ` | ✅ runs (an agent) | 📦 `x-org-agent-directive` * | † (summarised in `analysis`) | 📄 |
 | `decision` `if:` | ✍️ `if:` + `then/else` | ✅ | 📦 `if-condition` | † | 📄 |
 | `decision` `if~:` (fuzzy) | ✍️ `if~:` | ✅ agent-judged | 📦 `x-org-fuzzy-condition` * | † | 📄 |
@@ -65,6 +66,7 @@ attachment (†) and the objects hold what HUNT-EX makes searchable.
 | **hypothesis** | ✍️ frontmatter | ✅ first-class | 📦 `x-hunt` * | 📦 `threat-hunt-hypothesis` | 📄 |
 | **ATT&CK techniques** | ✍️ `labels:` | ✅ first-class | 📦 `x-hunt` * | 📦 `attack-id` on the hypothesis | 📄 |
 | **data requirements** | ✍️ derived from `targets:` | ✅ pre-launch check | 📦 `x-hunt` * | 📦 `data-source`/`tool` + `hunt-ex:telemetry` | 📄 |
+| paired portable rule (§5.8) | ✍️ ` ```sigma portable ` | 📦 `primitive_config.portable` | 📦 `x_hunt_portable` * | 📦 standard `sigma`/`yara` object, `derived-from` the query | 📄 |
 | **unknown keys / attrs** (§2) | ✍️ any frontmatter key, any `~~~yaml` attr | 📦 `x_hunt_frontmatter` / `x_hunt_attrs` | 📦 `x-hunt.frontmatter` / `x_hunt_attrs` * | † | 📄 |
 | **human review / diff** | ✅ plain-text PR | — | — | — | ✅ |
 
@@ -266,8 +268,10 @@ searchable objects and tags MISP wants, and the exact source alongside them.
 |---|---|
 | frontmatter `name`, H1 description, `targets:` (data sources + `product` bindings) | `threat-hunt-context` — `hunt-title`, `purpose`, `data-source`, `tool`, `methodology`, `status` |
 | `hypothesis:` + `attack.tXXXX` labels | `threat-hunt-hypothesis` — `hypothesis`, `attack-id`, `hypothesis-id: H1`, `analysis` (a one-line-per-step summary of the flow), `status` |
-| every `query` step | one `threat-hunt-query` — `query`, `query-language`, `data-source` (the target), `platform` (its binding), `comment` (params + description); linked `tests` → the hypothesis |
+| every `query` step | one `threat-hunt-query` — `query`, `query-language`, `data-source` (the target), `platform` (its binding), `comment` (role + params + description); linked `tests` → the hypothesis |
+| a paired ` ```<lang> portable ` block (SPEC §5.8) | MISP's own `sigma` / `yara` object — the rule, its title as `<lang>-rule-name`, a `context` naming the hunt.md step; linked `tests` → the hypothesis and `derived-from` → the query object |
 | a run result (SPEC §12), via `--result` | `threat-hunt-finding` — `outcome`, `conclusion` (disposition, per-step explanations, evidence summary, unexamined telemetry), `recommendation`; linked `concludes` → the hypothesis |
+| `series:` / `related:` (SPEC §3.8) | annotated event attributes (`… part 2/3`, `related hunt (<relation>): <reason>`); the hypothesis object's local id follows `series.index` |
 | `tlp:` | `tlp:*` event tag (and MISP `distribution`) |
 | `severity:` | `threat_level_id` |
 | `references:` | `link` attributes |
@@ -334,7 +338,8 @@ The output is a standard MISP event JSON (`{"Event": {…}}`) that `PyMISP`,
 `misp-import` or the REST API accept as-is. Identifiers are `uuid5`-derived from
 the playbook id (SPEC §10), so re-exporting an unchanged hunt is stable, and an
 event can be updated in place. Object templates are pinned to
-`threat-hunt-*` v1; the taxonomy vocabularies to `hunt-ex` v4.
+`threat-hunt-*` v1, `sigma` v2 and `yara` v9; the taxonomy vocabularies to
+`hunt-ex` v4.
 
 **Verified against a live MISP** (2.5.44 and, for 0.6, 2.5.45 via misp-docker) —
 [`tools/tests/e2e_misp.py`](./tools/tests/e2e_misp.py) pushes every repo hunt,
@@ -378,8 +383,9 @@ that surfaced, so you don't rediscover it:
 - if the event carries the `<slug>.hunt.md` attachment, returns that source
   **byte-exact** — `md → MISP → md` round-trips completely, control flow and all;
 - otherwise (an event authored by a peer, or with the attachment stripped) builds
-  a **draft**: one `query` step per `threat-hunt-query` (plus any `sigma`/`yara`
-  objects in the event), `hypothesis:` and `attack.*` labels from the hypothesis
+  a **draft**: one `query` step per `threat-hunt-query` (a `sigma`/`yara` object
+  linked `derived-from` a query becomes that step's portable twin, SPEC §5.8;
+  a standalone one becomes its own step), `hypothesis:` and `attack.*` labels from the hypothesis
   object, `tlp:` from the tag, targets from the queries' `data-source`s, and a
   `threat-hunt-finding` as a `manual` review step so a re-run is compared against
   what the peer found. HUNT-EX classification tags land in `hunt:`, telemetry
@@ -389,8 +395,18 @@ that surfaced, so you don't rediscover it:
   target categories — is `TODO`-marked, and the draft lints clean so
   `huntmd validate` points at exactly what an author still owes.
 
-An event with several `threat-hunt-hypothesis` objects imports the first and
-lists the rest under a `TODO` — hunt.md is one hypothesis per file.
+An event with several `threat-hunt-hypothesis` objects is **split**, because
+hunt.md is one hypothesis per file (SPEC §3.8):
+
+```bash
+huntmd convert peer-event.json --split -o hunts/     # one hunt.md per hypothesis
+```
+
+Each part keeps only the queries that declare its `hypothesis-id`, only its own
+ATT&CK labels, and its own finding; the parts are wired together with `series:`
+and `sibling` relations. Without `--split` the first hypothesis is converted and
+the rest are declared under `related:` (with each one's text as the `reason`), so
+nothing is lost and the CLI says how many parts there were.
 
 ---
 
@@ -424,6 +440,9 @@ a generation pipeline, a curated library or a PR gate turns them on.
 | fewer than two `scenario` stages `covered` (SPEC §3.4) | a one-stage hunt is a rule |
 | `verified_at` older than 180 days (SPEC §5.5) | the verification claim is folklore |
 | a query target that resolves to no telemetry plane (SPEC §6) | data requirements are not checkable (an info under the default profiles) |
+| no query declares `prevalence` or aggregates (SPEC §5.7) | a hunt that never asks "how common is this?" is a rule |
+| a volatile indicator list observed over a year ago (SPEC §3.7) | domains, IPs, URLs and hashes rot between campaigns |
+| `handoff: promote-to-detection` with no `detection-candidate` query (SPEC §5.8) | the hunt promised a promotion without saying what gets promoted |
 
 All warnings; the exit code is unaffected. The repository's own hunts pass it,
 and `tools/tests/check.py` keeps them passing.

@@ -118,6 +118,36 @@ _HUNTBASE_DSLS = {tag for tag, _, hb in LANGUAGES if hb}
 _KNOWN_DSLS = {tag for tag, _, _ in LANGUAGES}
 
 
+#: Parameter types (SPEC §3.7). Scalars, plus typed indicator lists whose
+#: members a runtime can validate and refresh.
+PARAMETER_SCALAR_TYPES = (
+    "string", "number", "integer", "boolean", "duration", "date", "host", "hostname",
+    "ip", "ipv4", "ipv6", "url", "uri", "domain", "hash", "email", "query", "path", "user",
+)
+#: `list[<member>]` — the member type must be one a runtime can check.
+PARAMETER_LIST_MEMBERS = ("domain", "ip", "ipv4", "ipv6", "hash", "url", "host", "hostname", "email", "path", "user", "string")
+#: The member types that rot: an adversary changes these between campaigns, so a
+#: list of them needs provenance and goes stale. A list of tool file names or
+#: usernames ages far more slowly and is not held to the same rule.
+VOLATILE_INDICATOR_MEMBERS = ("domain", "ip", "ipv4", "ipv6", "url", "hash")
+#: Where an indicator list came from, so a runtime can refresh it and a reader
+#: knows its age.
+INDICATOR_SOURCE_KINDS = ("stix-collection", "misp-event", "feed", "article", "advisory", "incident", "manual")
+_PARAM_LIST_TYPE = re.compile(r"^list\[([a-z0-9-]+)\]$", re.I)
+
+#: Whether an agent step must cite (SPEC §8.2). `required` is the default under
+#: the `evidence: citation_required` guardrail; the key makes it explicit and
+#: lets a step demand it even where the document relaxed the guardrail.
+CITE_VALUES = ("required", "optional")
+
+#: How one hunt relates to another (SPEC §3.8). hunt.md is one hypothesis per
+#: file; these are how a chain, an alternative, or a replacement is declared.
+RELATIONS = ("precedes", "follows", "sibling", "alternative", "supersedes", "superseded-by", "out-of-scope-alternative")
+#: Relations a reader *navigates*: the target has to exist, or the link is broken.
+#: `alternative` and `out-of-scope-alternative` may name a hunt nobody has
+#: written yet — that is the point of declaring them — so they are only noted.
+NAVIGATIONAL_RELATIONS = ("precedes", "follows", "sibling", "supersedes", "superseded-by")
+
 #: Provenance (SPEC §3.6): who wrote it, where it came from, whether a machine drafted it.
 PROVENANCE_SOURCE_SYSTEMS = ("misp", "cacao", "huntbase", "url", "other")
 PROVENANCE_GATES = ("dry-run", "lint", "critic", "executed", "human-review")
@@ -262,7 +292,17 @@ class Edge:
 #: Query-step verification contract (SPEC §5.5) and silence semantics (§5.6).
 VERIFIED = ("none", "dry-run", "executed")
 SILENCE = ("not_evidence_of_absence", "evidence_of_absence")
-_QUERY_CONTRACT_KEYS = ("source", "reads", "verified", "verified_at", "expected", "silence")
+#: Prevalence / baseline intent on a query step (SPEC §5.7): the stack-count-and-
+#: compare move, declared so a runtime that can compute first-seen does, and one
+#: that cannot runs the query as written.
+BASELINE_COMPARE = ("prior_equal_window", "first_seen", "new_this_window")
+#: What a query step is *for* (SPEC §5.8). `detection-candidate` is the query a
+#: `handoff: promote-to-detection` hands over.
+QUERY_ROLES = ("detection-candidate", "scoping", "enrichment", "baseline", "triage")
+#: Languages a paired portable block may be written in (SPEC §5.8) — the formats
+#: a peer can run without owning your stack.
+PORTABLE_LANGUAGES = ("sigma", "yara", "yara-l", "stix", "suricata", "snort")
+_QUERY_CONTRACT_KEYS = ("source", "reads", "verified", "verified_at", "expected", "silence", "prevalence", "baseline")
 
 
 @dataclass
@@ -282,6 +322,9 @@ class Step:
     judge: str | None = None
     # `unavailable: → end` closes a hunt on data it never examined (SPEC §7.2).
     # The edge itself vanishes (end is implicit), so the intent is recorded here.
+    #: A paired portable form of this step's query (SPEC §5.8): the native block
+    #: is what runs, this is what travels. ``{"language": …, "body": …}``.
+    portable: dict[str, Any] | None = None
     unavailable_to_end: bool = False
     else_to_end: bool = False  # `else: → end` written explicitly (lint only; end is implicit in the IR)
     # switch/parallel/subplaybook (kept for round-trip + linting)
@@ -341,6 +384,10 @@ def _parse_info_string(info: str) -> tuple[str, dict[str, Any]]:
         if "=" in tok:
             k, v = tok.split("=", 1)
             attrs[k.strip()] = v.strip()
+        elif tok.strip():
+            # A bare flag (`portable`, §5.8). Recorded as True so a flag is
+            # distinguishable from an absent key, and passes through Tier 2.
+            attrs[tok.strip()] = True
     return lang, attrs
 
 
@@ -425,6 +472,15 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
                 j += 1
             body = "\n".join(block)
             lang, attrs = _parse_info_string(info)
+            # A second fence flagged `portable` is the shareable twin of the
+            # step's own query (SPEC §5.8), not a redefinition of the step —
+            # without the flag a later fence still wins, as it always did.
+            if step.kind != "group" and "portable" in attrs:
+                inner_p, text_p = _extract_inner_yaml(body)
+                step.portable = {"language": lang, "body": text_p.strip(),
+                                 **{k: v for k, v in {**attrs, **inner_p}.items() if k != "portable"}}
+                i = j + 1
+                continue
             step.lang = lang
             step.target = attrs.get("target")
             step.params = attrs.get("params", {})
@@ -721,6 +777,10 @@ def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
             for key in _QUERY_CONTRACT_KEYS:
                 if key in s.attrs:
                     node["primitive_config"][key] = s.attrs[key]
+            if s.attrs.get("role"):
+                node["primitive_config"]["role"] = s.attrs["role"]
+            if s.portable:
+                node["primitive_config"]["portable"] = s.portable
             extra = _extra_attrs(s)
             if extra:
                 node["primitive_config"]["x_hunt_attrs"] = extra
@@ -739,7 +799,7 @@ def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
 def _config_for(s: Step) -> dict[str, Any]:
     if s.kind == "agent":
         cfg = {"objective": s.attrs.get("objective", s.body).strip()}
-        for k in ("tools", "context", "success_criteria", "max_iterations", "in", "out"):
+        for k in ("tools", "context", "success_criteria", "max_iterations", "in", "out", "cite"):
             if k in s.attrs:
                 cfg[k] = s.attrs[k]
         return cfg
@@ -768,7 +828,7 @@ def _config_for(s: Step) -> dict[str, Any]:
 #: Frontmatter keys the definition carries as first-class ``meta`` entries.
 _DEFINITION_META_KEYS = (
     "labels", "severity", "tlp", "hypothesis", "rationale", "analysis", "references", "parameters", "targets", "type",
-    "hunt", "scenario", "coverage", "blind_spots", "provenance",
+    "hunt", "scenario", "coverage", "blind_spots", "provenance", "series", "related",
 )
 
 
@@ -804,6 +864,8 @@ _FM_ORDER = (
     "rationale",
     "analysis",
     "hunt",
+    "series",
+    "related",
     "scenario",
     "coverage",
     "blind_spots",
@@ -819,6 +881,7 @@ _NATIVE_ATTRS = {
     "context",
     "success_criteria",
     "max_iterations",
+    "cite",
     "approval",
     "in",
     "out",
@@ -826,6 +889,7 @@ _NATIVE_ATTRS = {
     "params",
     "track",
     "blind_spot",
+    "role",
 }
 
 
@@ -839,6 +903,8 @@ def _info_string(s: Step) -> str:
     bits = []
     if s.target:
         bits.append(f"target={s.target}")
+    if s.attrs.get("role"):
+        bits.append(f"role={s.attrs['role']}")
     if s.params:
         bits.append("params=(" + ", ".join(f"{k}={v}" for k, v in s.params.items()) + ")")
     for key in ("in", "out"):
@@ -847,6 +913,17 @@ def _info_string(s: Step) -> str:
             rendered = ",".join(str(v) for v in value) if isinstance(value, list) else str(value)
             bits.append(f"{key}={rendered}")
     return (" " + " ".join(bits)) if bits else ""
+
+
+def _portable_block(s: Step) -> list[str]:
+    """The paired portable fence (SPEC §5.8), if the step has one."""
+    if not isinstance(s.portable, dict) or not str(s.portable.get("body") or "").strip():
+        return []
+    extra = {k: v for k, v in s.portable.items() if k not in ("language", "body")}
+    lines = [f"```{s.portable.get('language') or 'sigma'} portable"]
+    if extra:
+        lines += ["~~~yaml", _dump(extra, sort_keys=False, allow_unicode=True).strip(), "~~~"]
+    return lines + [str(s.portable["body"]).rstrip(), "```"]
 
 
 def playbook_to_markdown(pb: Playbook) -> str:
@@ -878,8 +955,9 @@ def playbook_to_markdown(pb: Playbook) -> str:
         if s.kind in ("query", "collection"):
             lang = "collect" if s.kind == "collection" else (s.lang or "sql")
             out += [f"```{lang}{info}", s.body.rstrip(), "```"]
+            out += _portable_block(s)
         elif s.kind == "agent":
-            directive = {k: s.attrs[k] for k in ("objective", "context", "tools", "success_criteria", "max_iterations") if k in s.attrs}
+            directive = {k: s.attrs[k] for k in ("objective", "context", "tools", "success_criteria", "max_iterations", "cite") if k in s.attrs}
             directive.setdefault("objective", s.body.strip())
             out += [f"```agent{info}", _dump(directive, sort_keys=False, allow_unicode=True).strip(), "```"]
         elif s.kind in ("task", "action"):
@@ -1102,7 +1180,12 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
         # step-level attribute block (SPEC §4.2).
         if ntype in ("query", "collection"):
             pc = node.get("primitive_config") or {}
+            portable = pc.get("portable")
+            if isinstance(portable, dict) and str(portable.get("body") or "").strip():
+                out += _portable_block(Step(slug=slug, kind=ntype, portable=portable))
             extra = {k: pc[k] for k in _QUERY_CONTRACT_KEYS if k in pc}
+            if pc.get("role"):
+                extra["role"] = pc["role"]
             extra.update(pc.get("x_hunt_attrs") or {} if isinstance(pc.get("x_hunt_attrs"), dict) else {})
         else:
             extra = cfg.get("x_hunt_attrs")
@@ -1138,13 +1221,19 @@ class Issue:
         return f"[{self.level.upper():5}] {self.slug or '-'}: {self.message}"
 
 
-def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | None = None) -> list[Issue]:
+def validate_markdown(
+    text: str, *, profile: str = "huntbase", max_tlp: str | None = None, bundle: set[str] | None = None
+) -> list[Issue]:
     """Lint a hunt.md against the format + a profile.
 
     ``format`` checks the neutral spec only; ``huntbase`` adds that runtime's
     capability gaps; ``cacao`` adds none — every construct exports (PROFILES §2),
     so a hunt clean at ``format`` level is clean for interchange; ``misp`` warns
     where the HUNT-EX vocabulary can't classify the hunt (PROFILES §3).
+
+    ``bundle`` is the set of hunt slugs the caller can see (a library directory);
+    when given, a ``related:``/``series:`` reference to a local slug that isn't
+    in it is reported (SPEC §3.8). Without it, references are shape-checked only.
 
     ``max_tlp`` caps the permitted sharing level: a public repository lints with
     ``max_tlp="green"`` so an ``amber``/``red`` hunt fails CI rather than being
@@ -1172,6 +1261,9 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_query_contract(pb)
     issues += _check_silence(pb)
     issues += _check_narrative_and_provenance(pb)
+    issues += _check_parameters(pb)
+    issues += _check_detection_promotion(pb, profile)
+    issues += _check_series_and_related(pb, bundle)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1190,6 +1282,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
                 issues.append(Issue("warn", s.slug, "agent step has no tools allowlist"))
             if "max_iterations" not in s.attrs:
                 issues.append(Issue("warn", s.slug, "agent step has no max_iterations bound"))
+            issues += _check_agent_context(s, slugs)
         if s.kind == "decision" and s.fuzzy:
             has_indet = any(e.frm == s.slug and e.branch == "default" for e in pb.edges)
             if not has_indet:
@@ -1266,6 +1359,7 @@ _AGGREGATION = re.compile(
 #: prose ("the block", "a kill chain") are deliberately left out.
 _CONTAINMENT_VERB = re.compile(r"\b(?:isolate|disable|delete|quarantine|revoke|wipe|terminate|reset the|reset all)\b", re.I)
 _STALE_VERIFICATION_DAYS = 180
+_STALE_INDICATORS_DAYS = 365
 _INDICATOR_LIST_MIN = 5
 
 
@@ -1295,8 +1389,7 @@ def _quality_issues(pb: Playbook) -> list[Issue]:
             verb = _CONTAINMENT_VERB.search(s.body).group(0)
             issues.append(Issue("warn", s.slug, f"manual task says '{verb}' — a change to the estate should be a gated ```action``` step, not an instruction in prose"))
         if s.kind == "agent":
-            ctx = s.attrs.get("context")
-            n_ctx = len(ctx) if isinstance(ctx, list) else 0
+            n_ctx = len(context_entries(s))
             try:
                 bound = int(s.attrs.get("max_iterations"))
             except (TypeError, ValueError):
@@ -1321,6 +1414,20 @@ def _quality_issues(pb: Playbook) -> list[Issue]:
 
     if not str(hunt_block(pb.meta).get("justification") or "").strip():
         issues.append(Issue("warn", "", "no hunt.justification — say what the business is paying for, or a negative result is indefensible (SPEC §3.3)"))
+    for name, spec in (pb.meta.get("parameters") or {}).items():
+        member = parameter_list_member(spec)
+        observed = (spec.get("from") or {}).get("observed") if isinstance(spec, dict) and isinstance(spec.get("from"), dict) else None
+        if member in VOLATILE_INDICATOR_MEMBERS and observed:
+            try:
+                from datetime import date  # noqa: PLC0415
+
+                age = (date.today() - date.fromisoformat(str(observed))).days
+            except ValueError:
+                age = None
+            if age is not None and age > _STALE_INDICATORS_DAYS:
+                issues.append(Issue("warn", "", f"parameter '{name}': indicators observed {age} days ago — refresh the list from {(spec.get('from') or {}).get('kind')} or drop them"))
+    if queries and not any(isinstance(s.attrs.get("prevalence"), dict) or _AGGREGATION.search(s.body) for s in queries):
+        issues.append(Issue("warn", "", "no prevalence step — nothing stack-counts a value across the fleet or compares to a prior window (SPEC §5.7); a hunt that never asks 'how common is this?' is a rule"))
     return issues
 
 
@@ -1464,6 +1571,169 @@ def _check_blind_spots(pb: Playbook, profile: str) -> list[Issue]:
     return issues
 
 
+def parameter_list_member(spec: Any) -> str | None:
+    """The member type of a `list[...]` parameter, else None (SPEC §3.7)."""
+    if not isinstance(spec, dict):
+        return None
+    m = _PARAM_LIST_TYPE.match(str(spec.get("type") or ""))
+    return m.group(1).lower() if m else None
+
+
+def _check_parameters(pb: Playbook) -> list[Issue]:
+    """Parameter types and indicator provenance (SPEC §3.7)."""
+    issues: list[Issue] = []
+    params = pb.meta.get("parameters")
+    if params is None:
+        return issues
+    if not isinstance(params, dict):
+        return [Issue("error", "", "parameters: must be a mapping of name → {type, default, …}")]
+    for name, spec in params.items():
+        if not isinstance(spec, dict):
+            issues.append(Issue("warn", "", f"parameter '{name}' should be a mapping {{type, default?, description?}}"))
+            continue
+        declared = str(spec.get("type") or "")
+        member = parameter_list_member(spec)
+        if not declared:
+            issues.append(Issue("warn", "", f"parameter '{name}' has no type: — a runtime cannot collect or validate it"))
+        elif member is not None:
+            if member not in PARAMETER_LIST_MEMBERS:
+                issues.append(Issue("warn", "", f"parameter '{name}': list member type '{member}' not in {list(PARAMETER_LIST_MEMBERS)}"))
+            default = spec.get("default")
+            if default is not None and not isinstance(default, list):
+                issues.append(Issue("warn", "", f"parameter '{name}' is a list type but its default is not a list"))
+        elif declared.lower() not in PARAMETER_SCALAR_TYPES:
+            issues.append(Issue("warn", "", f"parameter '{name}': type '{declared}' is not a known type {list(PARAMETER_SCALAR_TYPES)} or list[…] (kept verbatim)"))
+        src = spec.get("from")
+        if src is not None:
+            if not isinstance(src, dict):
+                issues.append(Issue("warn", "", f"parameter '{name}': from: should be {{kind, ref, observed}}"))
+            else:
+                if str(src.get("kind") or "") not in INDICATOR_SOURCE_KINDS:
+                    issues.append(Issue("warn", "", f"parameter '{name}': from.kind '{src.get('kind')}' not in {list(INDICATOR_SOURCE_KINDS)}"))
+                if not src.get("ref"):
+                    issues.append(Issue("warn", "", f"parameter '{name}': from: has no ref (collection id, event uuid, feed name or URL)"))
+                if src.get("observed") and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(src["observed"])):
+                    issues.append(Issue("warn", "", f"parameter '{name}': from.observed '{src['observed']}' is not an ISO date"))
+        elif member in VOLATILE_INDICATOR_MEMBERS:
+            issues.append(
+                Issue("warn", "", f"parameter '{name}' is a list of {member}s with no from: — these rot between campaigns; record where the list came from and when (SPEC §3.7)")
+            )
+    return issues
+
+
+def _check_agent_context(s: Step, slugs: set[str]) -> list[Issue]:
+    """An agent step's `context:` entries and its citation demand (SPEC §8.2)."""
+    issues: list[Issue] = []
+    for entry in context_entries(s):
+        ref = str(entry.get("step") or entry.get("var") or "")
+        for key in entry:
+            if key not in ("step", "var", "rows"):
+                issues.append(Issue("warn", s.slug, f"context entry '{ref}': unknown key '{key}' (expected step, var, rows)"))
+        rows = entry.get("rows")
+        if rows is not None and (isinstance(rows, bool) or not isinstance(rows, int) or rows < 1):
+            issues.append(Issue("warn", s.slug, f"context entry '{ref}': rows '{rows}' should be a positive integer — it is a row budget, not a flag"))
+        if not ref:
+            issues.append(Issue("warn", s.slug, "a context entry names neither a step nor a var"))
+        elif not ref.startswith("$") and ref not in slugs:
+            # An entry carrying a row budget is unambiguously 0.7 syntax, so a
+            # dangling reference in it is new content and warns. A bare name
+            # predates this check, so a dangling one is only noted — it is
+            # almost always a typo, but it must not change how a 0.5 hunt lints.
+            level = "warn" if "rows" in entry else "info"
+            issues.append(Issue(level, s.slug, f"context names '{ref}', which is not a step in this hunt"))
+    cite = s.attrs.get("cite")
+    if cite is not None and str(cite) not in CITE_VALUES:
+        issues.append(Issue("warn", s.slug, f"cite '{cite}' not in {list(CITE_VALUES)}"))
+    return issues
+
+
+def _check_detection_promotion(pb: Playbook, profile: str = "huntbase") -> list[Issue]:
+    """A hunt that says it promotes to detection must say *which* query (SPEC §5.8).
+
+    `role=` is 0.7 syntax while `hunt.handoff` is 0.6, so a 0.6-valid hunt would
+    pick up a new warning — the compatibility rule forbids that. It is an *info*
+    under the default profiles and a warning under `quality`, the same treatment
+    the telemetry-plane notice got in 0.6.
+    """
+    issues: list[Issue] = []
+    handoff = str(hunt_block(pb.meta).get("handoff") or "")
+    queries = [s for s in pb.steps if s.kind == "query"]
+    candidates = [s for s in queries if str(s.attrs.get("role") or "") == "detection-candidate"]
+    if handoff == "promote-to-detection" and queries and not candidates:
+        issues.append(
+            Issue(
+                "warn" if profile == "quality" else "info",
+                "",
+                "hunt.handoff is promote-to-detection but no query is marked role=detection-candidate — say which query gets promoted (SPEC §5.8)",
+            )
+        )
+    for s in queries:
+        if s.portable and str(s.attrs.get("role") or "") != "detection-candidate":
+            issues.append(Issue("info", s.slug, "has a portable block but is not role=detection-candidate — mark it if this is the query to promote"))
+    return issues
+
+
+_LOCAL_REF = re.compile(r"^[a-z0-9][a-z0-9._-]*$", re.I)
+
+
+def _check_series_and_related(pb: Playbook, bundle: set[str] | None) -> list[Issue]:
+    """`series:` and `related:` (SPEC §3.8): navigable, and pointing at something."""
+    issues: list[Issue] = []
+    series = pb.meta.get("series")
+    if series is not None:
+        if not isinstance(series, dict):
+            issues.append(Issue("error", "", "series: must be a mapping {slug, index, total, title}"))
+        else:
+            for key in ("slug", "index", "total"):
+                if series.get(key) in (None, ""):
+                    issues.append(Issue("warn", "", f"series: has no {key} — a reader can't tell where this part sits"))
+            idx, tot = series.get("index"), series.get("total")
+            if isinstance(idx, int) and isinstance(tot, int):
+                if idx < 1 or tot < 1:
+                    issues.append(Issue("error", "", f"series index/total must be positive (got {idx}/{tot})"))
+                elif idx > tot:
+                    issues.append(Issue("error", "", f"series index {idx} exceeds total {tot}"))
+            elif idx is not None or tot is not None:
+                issues.append(Issue("warn", "", "series index/total should be integers"))
+
+    related = pb.meta.get("related")
+    if related is None:
+        return issues
+    if not isinstance(related, list):
+        return issues + [Issue("error", "", "related: must be a list of {hunt, relation} entries")]
+    seen: list[tuple[str, str]] = []
+    for i, entry in enumerate(related):
+        if not isinstance(entry, dict):
+            issues.append(Issue("error", "", f"related[{i}] must be a mapping {{hunt, relation}}"))
+            continue
+        ref = str(entry.get("hunt") or "")
+        rel = str(entry.get("relation") or "")
+        if not ref:
+            issues.append(Issue("error", "", f"related[{i}] has no hunt: (a slug, a path or a URL)"))
+        if rel not in RELATIONS:
+            issues.append(Issue("warn", "", f"related[{i}]: relation '{rel}' not in {list(RELATIONS)}"))
+        if rel in ("out-of-scope-alternative", "supersedes", "superseded-by") and not entry.get("reason"):
+            issues.append(Issue("warn", "", f"related[{i}]: relation {rel} with no reason — say why, it is the analytic content peers want"))
+        if (ref, rel) in seen:
+            issues.append(Issue("warn", "", f"related[{i}]: duplicate {rel} → {ref}"))
+        seen.append((ref, rel))
+        # A bare slug is a claim about the library; check it when the caller
+        # told us what the library holds.
+        local = _LOCAL_REF.match(ref) and "://" not in ref
+        if bundle is not None and local:
+            stem = ref[:-3] if ref.endswith(".md") else ref
+            if stem not in bundle:
+                if rel in NAVIGATIONAL_RELATIONS:
+                    issues.append(Issue("warn", "", f"related[{i}]: {rel} → '{ref}' is not a hunt in this library — a reader cannot follow it; fix the slug or use a URL"))
+                else:
+                    article = "an" if str(rel).startswith(("a", "e", "i", "o", "u")) else "a"
+                    issues.append(Issue("info", "", f"related[{i}]: '{ref}' is not in this library yet — fine for {article} {rel or 'related'}, which may name a hunt nobody has written"))
+    if isinstance(series, dict) and series.get("total") and isinstance(series.get("total"), int) and series["total"] > 1:
+        if not any(str(e.get("relation")) in ("precedes", "follows", "sibling") for e in related if isinstance(e, dict)):
+            issues.append(Issue("info", "", "series of more than one part but no precedes/follows/sibling in related: — readers can't navigate between the parts"))
+    return issues
+
+
 def _check_narrative_and_provenance(pb: Playbook) -> list[Issue]:
     """`rationale:` / `analysis:` are prose (SPEC §3.1); `provenance:` has a shape (§3.6)."""
     issues: list[Issue] = []
@@ -1534,6 +1804,35 @@ def _check_query_contract(pb: Playbook) -> list[Issue]:
             issues.append(Issue("warn", s.slug, f"silence '{silence}' not in {list(SILENCE)}"))
         if "expected" in s.attrs and not isinstance(s.attrs["expected"], str):
             issues.append(Issue("warn", s.slug, "expected: should be prose describing what a hit looks like"))
+        role = s.attrs.get("role")
+        if role is not None and str(role) not in QUERY_ROLES:
+            issues.append(Issue("warn", s.slug, f"role '{role}' not in {list(QUERY_ROLES)}"))
+        if isinstance(s.portable, dict):
+            plang = str(s.portable.get("language") or "")
+            if plang not in PORTABLE_LANGUAGES:
+                issues.append(Issue("warn", s.slug, f"portable block language '{plang}' is not a portable detection format {list(PORTABLE_LANGUAGES)}"))
+            if not str(s.portable.get("body") or "").strip():
+                issues.append(Issue("warn", s.slug, "portable block is empty"))
+        prev = s.attrs.get("prevalence")
+        if prev is not None:
+            if not isinstance(prev, dict) or not prev.get("key"):
+                issues.append(Issue("warn", s.slug, "prevalence: should be {key: [fields], by: <dimension>, rare_below: N}"))
+            else:
+                if not isinstance(prev.get("key"), list):
+                    issues.append(Issue("warn", s.slug, "prevalence.key should be a list of the fields being counted"))
+                rb = prev.get("rare_below")
+                if rb is not None and (isinstance(rb, bool) or not isinstance(rb, int) or rb < 1):
+                    issues.append(Issue("warn", s.slug, f"prevalence.rare_below '{rb}' should be a positive integer (flag values seen on fewer than N)"))
+        base = s.attrs.get("baseline")
+        if base is not None:
+            if not isinstance(base, dict):
+                issues.append(Issue("warn", s.slug, "baseline: should be {window: <duration>, compare: <mode>}"))
+            else:
+                cmp_ = base.get("compare")
+                if cmp_ is not None and str(cmp_) not in BASELINE_COMPARE:
+                    issues.append(Issue("warn", s.slug, f"baseline.compare '{cmp_}' not in {list(BASELINE_COMPARE)}"))
+                if not base.get("window"):
+                    issues.append(Issue("warn", s.slug, "baseline: has no window — say what period the comparison spans"))
     return issues
 
 
@@ -1675,22 +1974,37 @@ def _check_tlp(pb: Playbook, max_tlp: str) -> list[Issue]:
 def _runtime_vars(s: Step) -> list[str]:
     vals: list[str] = []
     for k in ("in", "out", "context"):
-        v = s.attrs.get(k)
-        if isinstance(v, list):
-            vals += [str(x) for x in v if str(x).startswith("$")]
+        vals += [x for x in _attr_list(s, k) if x.startswith("$")]
     return vals
 
 
 def _attr_list(step: Step, key: str) -> list[str]:
-    """A step attr that may be a list or a comma-string (`out=$a,$b`)."""
+    """A step attr that may be a list or a comma-string (`out=$a,$b`).
+
+    A `context:` entry may also be an object carrying a row budget (SPEC §8.2);
+    what every caller here wants from it is the step slug or variable it names.
+    """
     v = step.attrs.get(key)
     if v is None:
         return []
     if isinstance(v, str):
         return [t.strip() for t in v.split(",") if t.strip()]
     if isinstance(v, list):
-        return [str(x) for x in v]
+        return [str(x.get("step") or x.get("var") or "") if isinstance(x, dict) else str(x) for x in v]
     return [str(v)]
+
+
+def context_entries(step: Step) -> list[dict[str, Any]]:
+    """`context:` normalised to `[{step|var, rows?}, …]` (SPEC §8.2)."""
+    raw = step.attrs.get("context")
+    items = raw if isinstance(raw, list) else ([raw] if raw not in (None, "") else [])
+    out: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, dict):
+            out.append(dict(item))
+        elif str(item).strip():
+            out.append({"step": str(item).strip()})
+    return out
 
 
 def _out_vars(step: Step) -> set[str]:

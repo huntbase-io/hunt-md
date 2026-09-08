@@ -61,7 +61,10 @@ if hx and not hx[0]["Taxonomy"].get("enabled"):
     print("   enabling hunt-ex taxonomy…", api("POST", f"/taxonomies/enable/{tid}")[0], api("POST", f"/taxonomies/addTag/{tid}")[0])
 st, tmpls = api("GET", "/objectTemplates/index")
 names = {t["ObjectTemplate"]["name"]: t["ObjectTemplate"] for t in tmpls}
-for n in ("threat-hunt-context", "threat-hunt-hypothesis", "threat-hunt-query", "threat-hunt-finding"):
+# 0.7: a portable twin travels as MISP's own sigma/yara object (SPEC §5.8), so
+# those templates must be present too — MISP drops unknown-template objects
+# silently, which is the whole reason this script exists.
+for n in ("threat-hunt-context", "threat-hunt-hypothesis", "threat-hunt-query", "threat-hunt-finding", "sigma", "yara"):
     check(f"object template {n} present", n in names, f"http {st}, {len(tmpls)} templates")
     if n in names:
         from huntmd.misp import _TEMPLATES
@@ -74,7 +77,7 @@ for name, result_path in cases:
     print(f"\n{name}")
     md = (ROOT / "hunts" / name).read_text()
     result = yaml.safe_load(result_path.read_text()) if result_path else None
-    ev = markdown_to_misp(md, result=result)
+    ev = markdown_to_misp(md, result=result, date="2026-09-08")  # pinned (issue #11)
     # A deleted event's uuid is blocklisted (and our ids are deterministic) — clear it, then add-or-edit.
     st, bl = api("GET", "/eventBlocklists/index")
     for b in bl if isinstance(bl, list) else []:
@@ -128,6 +131,32 @@ for name, result_path in cases:
         check("hunt-ex:handoff from the run result stored", 'hunt-ex:handoff="keep-as-periodic-hunt"' in got_tags, sorted(got_tags))
         ctx_obj = next((o for o in fetched["Event"]["Object"] if o["name"] == "threat-hunt-context"), {})
         check("period-start/period-end stored on the context object (datetime)", {a["object_relation"] for a in ctx_obj.get("Attribute", [])} >= {"period-start", "period-end"}, sorted(a["object_relation"] for a in ctx_obj.get("Attribute", [])))
+    check("pinned --date is stored verbatim", fetched["Event"]["date"] == "2026-09-08", fetched["Event"].get("date"))
+    # 0.7: the portable twin must survive MISP's own serialisation as a sigma
+    # object, keep both references, and come back as the query's twin.
+    src_pb0 = parse_markdown(md)
+    twins = [s for s in src_pb0.steps if s.portable]
+    if twins:
+        lang = str(twins[0].portable.get("language"))
+        stored = [o for o in fetched["Event"]["Object"] if o["name"] == lang]
+        check(f"portable {lang} object stored (not silently dropped)", len(stored) == len(twins), [o["name"] for o in fetched["Event"]["Object"]])
+        if stored:
+            rels = {r["relationship_type"] for r in stored[0].get("ObjectReference") or []}
+            check("  portable object keeps derived-from + tests", rels >= {"derived-from", "tests"}, sorted(rels))
+            check("  portable rule body survived intact", any(a["object_relation"] == lang and "logsource" in a["value"] for a in stored[0]["Attribute"]))
+        twin_slugs = {s.slug for s in twins}
+        back_twins = {s.slug for s in parse_markdown(back).steps if s.portable}
+        check("  the twin is still a twin after the exact round-trip", back_twins == twin_slugs, f"{sorted(back_twins)} != {sorted(twin_slugs)}")
+        draft_twins = [s for s in dpb.steps if s.portable]
+        check(
+            "  objects-only re-import restores it as the query's twin, not a separate step",
+            len(draft_twins) == len(twins) and all(str(s.attrs.get("role")) == "detection-candidate" for s in draft_twins),
+            [(s.slug, bool(s.portable), s.attrs.get("role")) for s in dpb.steps],
+        )
+    # 0.7 (issue #11): MISP's own galaxy + workflow tags
+    if any("—" in str(r.get("name", "")) and "ATT&CK" in str(r.get("name", "")) for r in src_pb0.meta.get("references") or []):
+        check("misp-galaxy:mitre-attack-pattern tag stored", any(t.startswith("misp-galaxy:mitre-attack-pattern=") for t in got_tags), sorted(t for t in got_tags if "galaxy" in t))
+    check("workflow:state tag stored", any(t.startswith("workflow:state=") for t in got_tags), sorted(t for t in got_tags if "workflow" in t))
     # 0.6: the neutral hunt: block classifies without a misp: block; provenance/narrative land on the objects
     src_pb = parse_markdown(md)
     hb = src_pb.meta.get("hunt") or {}
@@ -165,6 +194,12 @@ infos = [e["Event"]["info"] for e in found.get("response", [])]
 check("restSearch by outcome finds only the hunt with a finding", infos == ["Kerberoasting hunt"], infos)
 st, found = api("POST", "/attributes/restSearch", {"object_relation": "attack-id", "value": "T1558.003", "returnFormat": "json"})
 check("attribute search by attack-id T1558.003", any(a.get("value") == "T1558.003" for a in found.get("response", {}).get("Attribute", [])), json.dumps(found)[:200])
+st, found = api("POST", "/events/restSearch", {"tags": ['misp-galaxy:mitre-attack-pattern="Steal or Forge Authentication Certificates - T1649"'], "returnFormat": "json"})
+infos = [e["Event"]["info"] for e in found.get("response", [])]
+check("restSearch by the ATT&CK galaxy tag finds the ADCS hunt", infos == ["ADCS ESC1 certificate-template abuse hunt"], infos)
+st, found = api("POST", "/objects/restSearch", {"object_name": "sigma", "returnFormat": "json"})
+sigma_objs = (found.get("response") or {}).get("Object") or []
+check("object search by name=sigma finds the portable twins", len(sigma_objs) >= 2, f"http {st}: {len(sigma_objs)} sigma objects")
 
 print()
 print("FAILED: " + ", ".join(fails) if fails else "All end-to-end checks passed.")

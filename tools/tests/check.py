@@ -22,6 +22,7 @@ Exits non-zero on the first failing group, printing what differed.
 
 from __future__ import annotations
 
+import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -70,10 +71,14 @@ for path in hunts:
     try:
         markdown_to_definition(md)
         markdown_to_cacao(md)
+        # JSON-serializable export (dates/timestamps in parameters or frontmatter must not break json.dumps)
+        json.dumps(markdown_to_definition(md), default=str)
+        json.dumps(markdown_to_cacao(md), default=str)
+        json.dumps(markdown_to_misp(md), default=str)
         ok, detail = True, ""
     except Exception as exc:  # noqa: BLE001 - surface any conversion failure
         ok, detail = False, f"{type(exc).__name__}: {exc}"
-    report(f"{path.name} converts (definition + cacao)", ok, detail)
+    report(f"{path.name} converts (definition + cacao + misp JSON)", ok, detail)
 
 print("\nround-trip — md -> CACAO -> md must be exact")
 for path in hunts:
@@ -166,6 +171,7 @@ def passthrough_fingerprint(md: str) -> dict:
         "guardrails": _eg(pb.meta),
         # parallel/group are authoring sugar, not nodes (documented loss on the definition path)
         "attrs": {s.slug: {k: v for k, v in s.attrs.items() if k != "cacao_id"} for s in pb.steps if s.kind not in ("parallel", "group")},
+        "portable": {s.slug: s.portable for s in pb.steps if s.portable},
     })
 
 
@@ -282,7 +288,7 @@ report(
     markdown_to_cacao(_unknown)["x_hunt"]["frontmatter"]["private_ext"] == "verbatim",
 )
 
-print("\nbackward compatibility — frozen 0.5 hunts lint with the same errors and warnings (CHANGELOG rule 1)")
+print("\nbackward compatibility — frozen hunts lint with the same errors and warnings (CHANGELOG rule 1)")
 # These are the repo hunts exactly as they were at 0.5. New tooling may add
 # info-level notes; it must not add or remove an error or a warning.
 _EXPECTED_05 = {
@@ -291,6 +297,16 @@ _EXPECTED_05 = {
     ("scattered-spider-identity-takeover-0.5.md", "format"): [],
     ("scattered-spider-identity-takeover-0.5.md", "huntbase"): [],
 }
+# The 0.6 repo hunts, frozen at the v0.6 tag. Same promise across 0.6 → 0.7.
+_EXPECTED_06 = {
+    ("kerberoasting-0.6.md", "format"): [],
+    ("kerberoasting-0.6.md", "huntbase"): ["route-by-verdict: switch: compiles to chained binary checkpoints on Huntbase"],
+    ("scattered-spider-identity-takeover-0.6.md", "format"): [],
+    ("scattered-spider-identity-takeover-0.6.md", "huntbase"): [],
+    ("adcs-esc1-certificate-abuse-0.6.md", "format"): [],
+    ("adcs-esc1-certificate-abuse-0.6.md", "huntbase"): ["route-by-verdict: switch: compiles to chained binary checkpoints on Huntbase"],
+}
+_EXPECTED_05.update(_EXPECTED_06)
 for (fname, prof), expected in _EXPECTED_05.items():
     fx = ROOT / "tools" / "tests" / "fixtures" / fname
     got = [f"{i.slug}: {i.message}" for i in validate_markdown(fx.read_text(encoding="utf-8"), profile=prof) if i.level in ("error", "warn")]
@@ -527,7 +543,7 @@ report("--profile format ignores the misp: block", not any("vibes" in str(i) for
 report("legacy misp: classification keys get an info-level 'moved' notice", any(i.level == "info" and "moved to hunt.trigger" in i.message for i in validate_markdown(_badmisp, profile="misp")))
 
 print("\nhunt: block + telemetry planes (SPEC §3.1, §6)")
-_hb = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nhunt: {{trigger: {trig}, handoff: promote-to-detection, justification: 'PCI scope', assets: [cardholder-db], review_by: {rb}}}\ntargets:\n  siem: {{category: siem, name: SIEM{tele}}}\n---\n# t\n## q\n```kql target=siem\nx\n```\n→ end\n"
+_hb = "---\nhypothesis: x\ntlp: green\nlabels: [attack.t1000]\nhunt: {{trigger: {trig}, handoff: promote-to-detection, justification: 'PCI scope', assets: [cardholder-db], review_by: {rb}}}\ntargets:\n  siem: {{category: siem, name: SIEM{tele}}}\n---\n# t\n## q\n```kql target=siem role=detection-candidate\nx\n```\n→ end\n"
 _good_hb = _hb.format(trig="crown-jewel", rb="2027-01-01", tele=", telemetry: [identity]")
 report("well-formed hunt: block + declared telemetry lints clean", not [i for i in validate_markdown(_good_hb, profile="format") if i.level != "info"], str(validate_markdown(_good_hb, profile="format")))
 report("hunt.trigger off-vocabulary warns (never rejects)", any(i.level == "warn" and "hunt.trigger" in i.message for i in validate_markdown(_hb.format(trig="vibes", rb="2027-01-01", tele=", telemetry: [identity]"), profile="format")))
@@ -729,6 +745,239 @@ _pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")
 report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
 report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
 
+print("\nagent context budget + citation demand (SPEC §8.2)")
+_ac = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+  hunter: {{agent: true, name: Hunt agent}}
+---
+# t
+## q
+```kql target=siem
+x
+```
+## a
+```agent target=hunter
+objective: o
+context:
+  - {{step: {ref}, rows: {rows}}}
+  - q
+tools: [siem]
+cite: {cite}
+max_iterations: 4
+```
+→ end
+"""
+_ac_ok = _ac.format(ref="q", rows=200, cite="required")
+from huntmd.core import context_entries  # noqa: E402
+
+_ac_step = next(s for s in parse_markdown(_ac_ok).steps if s.kind == "agent")
+report("both context shapes parse and normalise", context_entries(_ac_step) == [{"step": "q", "rows": 200}, {"step": "q"}], str(context_entries(_ac_step)))
+report("well-formed context budget + cite lints clean", not [i for i in validate_markdown(_ac_ok, profile="format") if i.level in ("error", "warn")], str(validate_markdown(_ac_ok, profile="format")))
+report("a non-positive row budget warns", any("row budget" in i.message for i in validate_markdown(_ac.format(ref="q", rows=0, cite="required"), profile="format")))
+report("an off-vocabulary cite warns", any("cite 'maybe'" in i.message for i in validate_markdown(_ac.format(ref="q", rows=10, cite="maybe"), profile="format")))
+report("a budgeted context entry naming no such step warns", any(i.level == "warn" and "not a step in this hunt" in i.message for i in validate_markdown(_ac.format(ref="nope", rows=10, cite="required"), profile="format")))
+report("…while a bare dangling name is only noted (0.5 hunts lint unchanged)", [i.level for i in validate_markdown(_ac_ok.replace("  - q\n", "  - nope\n"), profile="format") if "not a step" in i.message] == ["info"])
+report("max_iterations below the context count still warns under quality", any("cannot finish" in i.message for i in validate_markdown(_ac_ok.replace("max_iterations: 4", "max_iterations: 1"), profile="quality")))
+report("context budget + cite reach the definition config", next(n for n in markdown_to_definition(_ac_ok)["nodes"] if n["id"] == "a")["config"]["context"][0] == {"step": "q", "rows": 200})
+_ac_rt = next(s for s in parse_markdown(cacao_to_markdown(markdown_to_cacao(_ac_ok))).steps if s.kind == "agent")
+report("context budget + cite survive md → CACAO → md", context_entries(_ac_rt)[0] == {"step": "q", "rows": 200} and _ac_rt.attrs.get("cite") == "required")
+_ac_def_rt = next(s for s in parse_markdown(definition_to_markdown(markdown_to_definition(_ac_ok))).steps if s.kind == "agent")
+report("…and md → definition → md", context_entries(_ac_def_rt)[0] == {"step": "q", "rows": 200} and _ac_def_rt.attrs.get("cite") == "required")
+
+print("\nrelated hunts + series (SPEC §3.8)")
+_sr = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+series: {{slug: chain, index: {idx}, total: {tot}, title: part}}
+related:
+  - {{hunt: {ref}, relation: {rel}{reason}}}
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem
+x
+```
+→ end
+"""
+_sr_ok = _sr.format(idx=2, tot=3, ref="other-hunt", rel="precedes", reason="")
+report("well-formed series + related lints clean", not [i for i in validate_markdown(_sr_ok, profile="format") if i.level in ("error", "warn")], str(validate_markdown(_sr_ok, profile="format")))
+report("index above total is an error", any("exceeds total" in i.message for i in validate_markdown(_sr.format(idx=4, tot=3, ref="o", rel="precedes", reason=""), profile="format")))
+report("an off-vocabulary relation warns", any("relation 'vibes'" in i.message for i in validate_markdown(_sr.format(idx=1, tot=2, ref="o", rel="vibes", reason=""), profile="format")))
+report("supersedes without a reason warns", any("with no reason" in i.message for i in validate_markdown(_sr.format(idx=1, tot=2, ref="o", rel="supersedes", reason=""), profile="format")))
+report("…and is quiet with one", not any("with no reason" in i.message for i in validate_markdown(_sr.format(idx=1, tot=2, ref="o", rel="supersedes", reason=", reason: replaced"), profile="format")))
+report("a navigational slug that names nothing in the library warns", any(i.level == "warn" and "cannot follow it" in i.message for i in validate_markdown(_sr_ok, profile="format", bundle={"kerberoasting"})))
+report("an unwritten alternative is only an info note", [i.level for i in validate_markdown(_sr.format(idx=1, tot=1, ref="not-written-yet", rel="out-of-scope-alternative", reason=", reason: needs network telemetry"), profile="format", bundle={"kerberoasting"}) if "not in this library yet" in i.message] == ["info"])
+report("…and is quiet when it resolves", not any("not a hunt in this library" in i.message for i in validate_markdown(_sr_ok, profile="format", bundle={"other-hunt"})))
+report("a URL reference is never checked against the library", not any("not a hunt" in i.message for i in validate_markdown(_sr.format(idx=1, tot=2, ref="https://x/y.md", rel="sibling", reason=""), profile="format", bundle=set())))
+report("series/related survive md → CACAO → md", parse_markdown(cacao_to_markdown(markdown_to_cacao(_sr_ok))).meta["series"]["index"] == 2)
+_sr_ev = markdown_to_misp(_sr_ok)["Event"]
+report("the hypothesis id follows the series index (H2 for part 2)", any(a["object_relation"] == "hypothesis-id" and a["value"] == "H2" for o in _sr_ev["Object"] if o["name"] == "threat-hunt-hypothesis" for a in o["Attribute"]))
+report("series + relation travel as annotated event attributes", any("part 2/3" in str(a.get("value")) for a in _sr_ev["Attribute"]) and any("related hunt (precedes)" in str(a.get("comment")) for a in _sr_ev["Attribute"]))
+
+# A peer's event with two hypotheses: one file per hypothesis, wired together.
+_multi = {
+    "Event": {
+        "info": "Two-part intrusion", "uuid": "22222222-3333-4444-5555-666666666666", "threat_level_id": "2",
+        "Tag": [{"name": "tlp:green"}, {"name": 'hunt-ex:telemetry="endpoint"'}],
+        "Attribute": [],
+        "Object": [
+            {"name": "threat-hunt-context", "uuid": "c0", "Attribute": [{"object_relation": "hunt-title", "value": "Two-part intrusion"}]},
+            {"name": "threat-hunt-hypothesis", "uuid": "h1", "Attribute": [
+                {"object_relation": "hypothesis-id", "value": "H1"},
+                {"object_relation": "hypothesis", "value": "Loader persisted via a scheduled task"},
+                {"object_relation": "attack-id", "value": "T1053.005"}]},
+            {"name": "threat-hunt-hypothesis", "uuid": "h2", "Attribute": [
+                {"object_relation": "hypothesis-id", "value": "H2"},
+                {"object_relation": "hypothesis", "value": "Data left over a blockchain C2 channel"},
+                {"object_relation": "attack-id", "value": "T1102"}]},
+            {"name": "threat-hunt-query", "uuid": "q1", "Attribute": [
+                {"object_relation": "hypothesis-id", "value": "H1"},
+                {"object_relation": "query", "value": "DeviceProcessEvents | where x"},
+                {"object_relation": "query-language", "value": "KQL"}]},
+            {"name": "threat-hunt-query", "uuid": "q2", "Attribute": [
+                {"object_relation": "hypothesis-id", "value": "H2"},
+                {"object_relation": "query", "value": "DeviceNetworkEvents | where y"},
+                {"object_relation": "query-language", "value": "KQL"}]},
+        ],
+    }
+}
+from huntmd.misp import hypothesis_count, misp_to_markdowns  # noqa: E402
+
+report("hypothesis_count sees both", hypothesis_count(_multi) == 2)
+_files = misp_to_markdowns(_multi)
+report("a two-hypothesis event splits into two files", len(_files) == 2 and all(n.endswith(".md") for n, _ in _files), [n for n, _ in _files])
+_p1, _p2 = (parse_markdown(x) for _, x in _files)
+report("each file keeps its own hypothesis and its own query", "scheduled task" in str(_p1.meta["hypothesis"]) and "blockchain" in str(_p2.meta["hypothesis"]) and "DeviceProcessEvents" in _p1.steps[0].body and "DeviceNetworkEvents" in _p2.steps[0].body)
+report("each file keeps only its own ATT&CK label", _p1.meta["labels"] == ["hunt", "attack.t1053.005"] and _p2.meta["labels"] == ["hunt", "attack.t1102"], f"{_p1.meta['labels']} / {_p2.meta['labels']}")
+report("the parts are wired with series + sibling relations", _p1.meta["series"] == {"slug": "two-part-intrusion", "index": 1, "total": 2, "title": "Two-part intrusion"} and _p2.meta["related"][0]["relation"] == "sibling", str(_p1.meta.get("series")))
+report("both split files lint clean", not [str(i) for pb_md in (x for _, x in _files) for i in validate_markdown(pb_md, profile="format") if i.level == "error"])
+report("without --split the first hypothesis converts and the rest are declared", parse_markdown(misp_to_markdown(_multi)).meta["related"][0]["reason"].startswith("Data left"))
+
+print("\nquery role + paired portable form (SPEC §5.8)")
+_pf = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+hunt: {{handoff: {handoff}}}
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem role={role}
+Event | where EventID == 39
+```
+```{plang} portable
+title: Weak certificate mapping
+logsource: {{product: windows, service: system}}
+detection:
+  sel: {{EventID: 39}}
+  condition: sel
+```
+→ end
+"""
+_pf_ok = _pf.format(handoff="promote-to-detection", role="detection-candidate", plang="sigma")
+_pf_pb = parse_markdown(_pf_ok)
+_pf_step = _pf_pb.steps[0]
+report("the native fence still defines the step", _pf_step.lang == "kql" and _pf_step.target == "siem" and "EventID == 39" in _pf_step.body)
+report("the portable fence attaches as a twin, not a redefinition", (_pf_step.portable or {}).get("language") == "sigma" and "logsource" in (_pf_step.portable or {}).get("body", ""))
+report("role parses from the info string", _pf_step.attrs.get("role") == "detection-candidate")
+report("well-formed role + portable lints clean", not [i for i in validate_markdown(_pf_ok, profile="format") if i.level in ("error", "warn")], str(validate_markdown(_pf_ok, profile="format")))
+report("an unflagged second fence still replaces the query (0.5 behaviour intact)", parse_markdown(_pf_ok.replace("```sigma portable", "```sigma")).steps[0].lang == "sigma")
+report("promote-to-detection with no detection-candidate is noted by default", any(i.level == "info" and "no query is marked role=detection-candidate" in i.message for i in validate_markdown(_pf.format(handoff="promote-to-detection", role="scoping", plang="sigma"), profile="format")))
+report("…and warns under --profile quality", any(i.level == "warn" and "no query is marked role=detection-candidate" in i.message for i in validate_markdown(_pf.format(handoff="promote-to-detection", role="scoping", plang="sigma"), profile="quality")))
+report("…and does not warn for another handoff", not any("detection-candidate" in i.message and i.level == "warn" for i in validate_markdown(_pf.format(handoff="retire", role="scoping", plang="sigma"), profile="format")))
+report("an off-vocabulary role warns", any("role 'vibes'" in i.message for i in validate_markdown(_pf.format(handoff="retire", role="vibes", plang="sigma"), profile="format")))
+report("a non-portable language in a portable block warns", any("not a portable detection format" in i.message for i in validate_markdown(_pf.format(handoff="retire", role="scoping", plang="kql"), profile="format")))
+report("role + portable survive md → md", (parse_markdown(_p2m(_pf_pb)).steps[0].portable or {}).get("language") == "sigma" and parse_markdown(_p2m(_pf_pb)).steps[0].attrs.get("role") == "detection-candidate")
+report("role + portable survive md → CACAO → md", (parse_markdown(cacao_to_markdown(markdown_to_cacao(_pf_ok))).steps[0].portable or {}).get("language") == "sigma")
+_pf_pc = next(n for n in markdown_to_definition(_pf_ok)["nodes"] if n["id"] == "q")["primitive_config"]
+report("role + portable are named primitive_config keys", _pf_pc.get("role") == "detection-candidate" and _pf_pc.get("portable", {}).get("language") == "sigma")
+report("role + portable survive md → definition → md", (parse_markdown(definition_to_markdown(markdown_to_definition(_pf_ok))).steps[0].portable or {}).get("language") == "sigma")
+_pf_ev = markdown_to_misp(_pf_ok)["Event"]
+_pf_sigma = [o for o in _pf_ev["Object"] if o["name"] == "sigma"]
+_pf_q = next(o for o in _pf_ev["Object"] if o["name"] == "threat-hunt-query")
+report("the portable twin exports as MISP's own sigma object", len(_pf_sigma) == 1 and any(a["object_relation"] == "sigma" and "logsource" in a["value"] for a in _pf_sigma[0]["Attribute"]), [o["name"] for o in _pf_ev["Object"]])
+report("…linked derived-from the query and tests the hypothesis", _pf_sigma and {r["relationship_type"] for r in _pf_sigma[0]["ObjectReference"]} == {"derived-from", "tests"} and any(r["referenced_uuid"] == _pf_q["uuid"] for r in _pf_sigma[0]["ObjectReference"]))
+report("…and its rule name comes from the sigma title", _pf_sigma and any(a["object_relation"] == "sigma-rule-name" and a["value"] == "Weak certificate mapping" for a in _pf_sigma[0]["Attribute"]))
+report("md → MISP → md stays byte-exact with a portable twin", misp_to_markdown(json.loads(json.dumps(markdown_to_misp(_pf_ok)))) == _pf_ok)
+_pf_stripped = json.loads(json.dumps(markdown_to_misp(_pf_ok)))
+_pf_stripped["Event"]["Attribute"] = [a for a in _pf_stripped["Event"]["Attribute"] if a["type"] != "attachment"]
+_pf_draft = parse_markdown(misp_to_markdown(_pf_stripped))
+report("objects-only import restores the sigma object as the query's twin, not a separate step", len([s for s in _pf_draft.steps if s.kind == "query"]) == 1 and (_pf_draft.steps[0].portable or {}).get("language") == "sigma", [(s.slug, s.kind, bool(s.portable)) for s in _pf_draft.steps])
+
+print("\ntyped parameters + indicator provenance (SPEC §3.7)")
+_tp = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+parameters:
+  lookback: {{type: duration, default: 7d}}
+  c2:
+    type: {ptype}
+    default: {default}
+{from_}targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem params=(days=lookback, list=c2)
+x {{{{days}}}} {{{{list}}}}
+```
+→ end
+"""
+_from_ok = "    from: {kind: article, ref: 'https://x', observed: 2026-05-11}\n"
+_tp_ok = _tp.format(ptype="list[domain]", default='["a.example"]', from_=_from_ok)
+report("typed indicator list with provenance lints clean", not [i for i in validate_markdown(_tp_ok, profile="format") if i.level != "info"], str(validate_markdown(_tp_ok, profile="format")))
+report("an indicator list with no from: warns", any("no from:" in i.message for i in validate_markdown(_tp.format(ptype="list[domain]", default='["a.example"]', from_=""), profile="format")))
+report("an unknown list member type warns", any("list member type 'ipv7'" in i.message for i in validate_markdown(_tp.format(ptype="list[ipv7]", default='["a"]', from_=_from_ok), profile="format")))
+report("an unknown scalar type warns", any("is not a known type" in i.message for i in validate_markdown(_tp.format(ptype="vibes", default='"a"', from_=""), profile="format")))
+report("a list type with a scalar default warns", any("default is not a list" in i.message for i in validate_markdown(_tp.format(ptype="list[domain]", default='"a.example"', from_=_from_ok), profile="format")))
+report("from.kind off-vocabulary warns", any("from.kind" in i.message for i in validate_markdown(_tp_ok.replace("kind: article", "kind: hearsay"), profile="format")))
+report("stale indicators warn under --profile quality", any("indicators observed" in i.message for i in validate_markdown(_tp_ok.replace("observed: 2026-05-11", "observed: 2020-01-01"), profile="quality")))
+_tp_cacao = markdown_to_cacao(_tp_ok)["playbook_variables"]["__c2__"]
+report("CACAO carries the list type and its provenance", _tp_cacao["x_hunt_type"] == "list[domain]" and _tp_cacao["x_hunt_from"]["ref"] == "https://x" and _tp_cacao["value"] == "a.example")
+_tp_rt = parse_markdown(cacao_to_markdown(markdown_to_cacao(_tp_ok))).meta["parameters"]["c2"]
+report("type, list default and from: survive md → CACAO → md", _tp_rt["type"] == "list[domain]" and _tp_rt["default"] == ["a.example"] and str(_tp_rt["from"]["observed"]) == "2026-05-11", str(_tp_rt))
+report("a list of tool paths needs no from: (only volatile members rot)", not any("with no from:" in i.message for i in validate_markdown(_tp.format(ptype="list[path]", default="[a.exe]", from_=""), profile="format")))
+report("…and a year-old tool list is not called stale", not any("indicators observed" in i.message for i in validate_markdown(_tp.format(ptype="list[path]", default="[a.exe]", from_="    from: {kind: advisory, ref: AA, observed: 2020-01-01}\n"), profile="quality")))
+
+print("\nprevalence + baseline (SPEC §5.7)")
+_pv7 = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem
+~~~yaml
+prevalence: {{key: {key}, by: host, rare_below: {rb}}}
+baseline: {{window: 14d, compare: {cmp}}}
+~~~
+x
+```
+→ end
+"""
+_pv7_ok = _pv7.format(key="[proc]", rb=3, cmp="first_seen")
+report("well-formed prevalence/baseline lints clean", not [i for i in validate_markdown(_pv7_ok, profile="format") if i.level != "info"], str(validate_markdown(_pv7_ok, profile="format")))
+report("baseline.compare off-vocabulary warns", any("baseline.compare" in i.message for i in validate_markdown(_pv7.format(key="[proc]", rb=3, cmp="vibes"), profile="format")))
+report("rare_below must be a positive integer", any("rare_below" in i.message for i in validate_markdown(_pv7.format(key="[proc]", rb=0, cmp="first_seen"), profile="format")))
+report("prevalence.key must be a list", any("prevalence.key" in i.message for i in validate_markdown(_pv7.format(key="proc", rb=3, cmp="first_seen"), profile="format")))
+_pc7 = next(n for n in markdown_to_definition(_pv7_ok)["nodes"] if n["id"] == "q")["primitive_config"]
+report("prevalence/baseline are named primitive_config keys", _pc7.get("prevalence", {}).get("rare_below") == 3 and _pc7.get("baseline", {}).get("compare") == "first_seen")
+report("prevalence survives md → CACAO → md", parse_markdown(cacao_to_markdown(markdown_to_cacao(_pv7_ok))).steps[0].attrs.get("prevalence", {}).get("by") == "host")
+report("a hunt with no prevalence step warns under --profile quality", any("no prevalence step" in i.message for i in validate_markdown(_pv7_ok.replace("prevalence: {key: [proc], by: host, rare_below: 3}\n", "").replace("baseline: {window: 14d, compare: first_seen}\n", ""), profile="quality")))
+
 print("\nquality profile (opt-in, SPEC §13)")
 _ql = """---
 hypothesis: x
@@ -785,6 +1034,78 @@ report("stale verified_at warns", any("days old" in i.message for i in validate_
 for path in hunts:
     _qi = [str(i) for i in validate_markdown(path.read_text(encoding="utf-8"), profile="quality") if i.level == "warn"]
     report(f"{path.name} passes --profile quality", not _qi, "; ".join(_qi[:2]))
+
+print("\nMISP hygiene (issue #11): detection, pinned date, galaxy + workflow tags, logsource targets, multi-event")
+report(
+    "a stray YAML with info/Object keys is no longer mistaken for an event",
+    not is_misp_event({"info": "my notes", "Object": ["a", "b"]})
+    and not is_misp_event({"info": "x", "Object": [{"not_a_name": 1}]})
+    and not is_misp_event({"hunt_result": {"hunt": "k"}, "info": "x", "Attribute": []}),
+)
+report(
+    "…while real events still are",
+    is_misp_event(_foreign)
+    and is_misp_event(_foreign["Event"])
+    and is_misp_event({"response": [_foreign]}),
+)
+_d1 = markdown_to_misp(_kb, date="2026-01-02")["Event"]["date"]
+report("--date pins the event date", _d1 == "2026-01-02")
+import contextlib, io  # noqa: E402
+from huntmd.__main__ import main as cli_main  # noqa: E402
+_cli_buf = io.StringIO()
+with contextlib.redirect_stdout(_cli_buf):
+    cli_main(["convert", str(hunts[0]), "--to", "misp", "--date", "2026-04-05"])
+report("CLI --date pins MISP event date", json.loads(_cli_buf.getvalue())["Event"]["date"] == "2026-04-05")
+_cli_cacao_buf = io.StringIO()
+with contextlib.redirect_stdout(_cli_cacao_buf):
+    cli_main(["convert", str(hunts[0]), "--to", "cacao"])
+report("CLI convert --to cacao succeeds as valid JSON", json.loads(_cli_cacao_buf.getvalue())["type"] == "playbook")
+report(
+    "a hunt's own created: pins it without a flag",
+    markdown_to_misp(_kb.replace("tlp: green", "created: 2026-03-04\ntlp: green"))["Event"]["date"] == "2026-03-04",
+)
+_gt = {t["name"] for t in markdown_to_misp(_kb)["Event"]["Tag"]}
+report(
+    "the galaxy tag is emitted when a reference names the technique",
+    any(t.startswith("misp-galaxy:mitre-attack-pattern=") and "T1558.003" in t for t in _gt),
+    str(sorted(_gt)),
+)
+report(
+    "…and omitted rather than guessed when it does not",
+    not any("misp-galaxy" in t for t in {x["name"] for x in markdown_to_misp(_kb.replace(" — Steal or Forge Kerberos Tickets: Kerberoasting", ""))["Event"]["Tag"]}),
+)
+report("workflow:state mirrors the context status", 'workflow:state="incomplete"' in _gt)
+report(
+    "…and a concluded run reports complete",
+    'workflow:state="complete"' in {t["name"] for t in markdown_to_misp(_kb, result=_run)["Event"]["Tag"]},
+)
+from huntmd.misp import _logsource_target, find_events  # noqa: E402
+
+report(
+    "a sigma logsource names the source it needs, instead of guessing SIEM",
+    _logsource_target("logsource:\n  category: process_creation\n  product: windows\n") == ("Windows process creation", "endpoint")
+    and _logsource_target("logsource: {product: okta, service: okta}")[1] == "identity"
+    and _logsource_target("detection:\n  sel: {a: 1}") == (None, None),
+    str(_logsource_target("logsource:\n  category: process_creation\n  product: windows\n")),
+)
+_sig_ev = json.loads(json.dumps(_foreign))
+_sig_ev["Event"]["Object"] = [o for o in _sig_ev["Event"]["Object"] if o["name"] in ("threat-hunt-context", "threat-hunt-hypothesis", "sigma")]
+_sig_ev["Event"]["Object"][-1]["Attribute"][0]["value"] = "title: x\nlogsource:\n  category: process_creation\n  product: windows\ndetection:\n  sel: {Image: a.exe}\n  condition: sel"
+_sig_pb = parse_markdown(misp_to_markdown(_sig_ev))
+report(
+    "…so the imported draft's target carries an endpoint category, not siem",
+    any(tg.get("category") == "endpoint" for tg in _sig_pb.meta["targets"].values()),
+    str(_sig_pb.meta["targets"]),
+)
+_two_events = {"response": [json.loads(json.dumps(_foreign)), {"Event": dict(json.loads(json.dumps(_foreign))["Event"], info="Second peer hunt", uuid="33333333-4444-5555-6666-777777777777")}]}
+report("find_events sees every event in a restSearch response", len(find_events(_two_events)) == 2)
+_two_files = misp_to_markdowns(_two_events)
+report(
+    "a multi-event document splits into a file per event, with unique names",
+    len(_two_files) == 2 and len({n for n, _ in _two_files}) == 2,
+    str([n for n, _ in _two_files]),
+)
+report("both files lint clean", not [str(i) for _, x in _two_files for i in validate_markdown(x, profile="format") if i.level == "error"])
 
 print("\nrun results (SPEC §12)")
 from huntmd.results import validate_result  # noqa: E402

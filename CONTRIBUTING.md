@@ -35,7 +35,8 @@ against the format spec and a lint pass.
 - **Fuzzy conditions have `indeterminate:`** — an `if~:` MUST route indeterminate
   (recommended: to a human `task`).
 - **Agent steps are bounded** — every `agent` step has a `tools` allowlist and
-  `max_iterations`.
+  `max_iterations`. Cap a large `context` result with `{ step: …, rows: N }` and
+  state `cite: required` where the verdict must be evidenced (SPEC §8.2).
 - **Guardrails stay at their defaults** unless you have a reason — relaxing
   `telemetry`, `evidence`, `missing_data` or `claims` warns, and a reviewer will
   ask why (SPEC §8.1).
@@ -48,6 +49,9 @@ against the format spec and a lint pass.
 - **Say what the hunt can see** — when the hunt comes from an intrusion report,
   `scenario:` + `coverage:` say per stage whether it is covered, not visible,
   or out of scope (SPEC §3.4).
+- **Say which query is the detection** — if `hunt.handoff` is
+  `promote-to-detection`, mark that query `role=detection-candidate` and
+  consider pairing a ` ```sigma portable ` twin so peers can run it (SPEC §5.8).
 - **Say what a query reads and what silence proves** — `reads:`, `verified:`,
   `expected:` and `silence:` on query steps (SPEC §5.5–§5.6); a hunt must not
   close on an empty result its own author marked as proving nothing.

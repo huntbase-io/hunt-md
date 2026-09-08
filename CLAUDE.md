@@ -22,9 +22,10 @@ python -m huntmd convert  ../hunts/kerberoasting.md                 # hunt.md �
 python -m huntmd convert  ../hunts/kerberoasting.md --to cacao      # hunt.md → CACAO v2 playbook JSON
 python -m huntmd convert  ../my-hunt.definition.yaml                # definition → hunt.md (best-effort inverse)
 python -m huntmd convert  ../some-cacao-playbook.json               # CACAO → hunt.md (draft, TODO-marked)
-python -m huntmd convert  ../hunts/kerberoasting.md --to misp       # hunt.md → MISP event JSON (HUNT-EX tags + threat-hunt-* objects)
+python -m huntmd convert  ../hunts/kerberoasting.md --to misp --date 2026-09-08  # → MISP event JSON (pin the date so fixtures don't drift)
 python -m huntmd convert  ../hunts/kerberoasting.md --to misp --result ../examples/results/kerberoasting-run.yaml  # + threat-hunt-finding
 python -m huntmd convert  ../some-misp-event.json                   # MISP → hunt.md (exact via attachment, else draft)
+python -m huntmd convert  ../some-misp-event.json --split -o ../hunts/  # one file per threat-hunt-hypothesis (SPEC §3.8)
 python -m huntmd validate ../hunts/kerberoasting.md --profile misp  # HUNT-EX classifiability warnings
 python -m huntmd validate ../hunts/kerberoasting.md --profile quality  # opt-in "more than a rule" checks (PROFILES §5)
 python -m huntmd validate ../hunts/kerberoasting.md --max-tlp green  # publication gate (public repo policy)
@@ -39,7 +40,7 @@ CI ([.github/workflows/lint.yml](.github/workflows/lint.yml)) runs the checks be
    **Compatibility rule:** a 0.5 hunt must lint with the same errors and warnings after your change — `check.py` asserts this against frozen copies in [tools/tests/fixtures/](tools/tests/fixtures/). New checks on 0.5-valid content are `info`, or live in `--profile quality`.
 2. **Round-trip must stay exact** for repo hunts: `md → cacao → md` preserves step kinds, slugs, targets, parameters and every edge. This is load-bearing — it's what the CACAO profile claims in [PROFILES.md](PROFILES.md).
 3. `python tools/tests/check.py` — the actual suite (stdlib only). Covers all of the above plus guardrails, confidence/`unavailable:` handling, result validation, and MISP (`md → misp → md` byte-exact via the attachment; objects-only events import as lint-clean drafts).
-4. **Live MISP check** (opt-in, needs an instance): `MISP_URL=… MISP_KEY=… python tools/tests/e2e_misp.py` — pushes both hunts, re-imports byte-exact, checks templates/taxonomy presence and `hunt-ex` tag search. Run it after touching `misp.py`'s object shapes; MISP drops malformed/unknown-template objects *silently*, so unit tests can't catch that class of bug.
+4. **Live MISP check** (opt-in, needs an instance): `MISP_URL=… MISP_KEY=… python tools/tests/e2e_misp.py` — pushes every hunt in `hunts/`, re-imports byte-exact, checks templates/taxonomy presence and `hunt-ex` tag search. Run it after touching `misp.py`'s object shapes; MISP drops malformed/unknown-template objects *silently*, so unit tests can't catch that class of bug.
 5. **Corpus check**: [examples/cacao-import/fetch-corpus.sh](examples/cacao-import/fetch-corpus.sh) pulls 49 real CACAO playbooks from six projects; all must import, parse and lint clean (332 steps preserved). Requires `gh` + network. The vendored conversions in [examples/cacao-import/](examples/cacao-import/) are the offline fixtures.
 
 ## Architecture
@@ -69,6 +70,7 @@ Adding another interchange format means writing `X_to_playbook` / `playbook_to_X
 
 Key invariants when editing:
 
+- **A second fence in one section is a redefinition unless flagged `portable`.** `_parse_section` replaces the step's language/body on every fence, which is 0.5 behaviour and stays. A fence whose info-string carries the bare flag `portable` attaches as `step.portable` instead (SPEC §5.8). Bare info-string flags parse to `True`.
 - **Step kind is inferred, not declared.** A section's kind comes from its content — fenced block language (`agent`/`manual`/`action`/`collect` in `_BLOCK_LANG_KIND`, any other language ⇒ `query`) or an `if:`/`if~:`/`switch:`/`while:`/`run:`/`parallel:` clause. An explicit override is a heading suffix: `## triage [agent]`.
 - **Edges live on the target node.** The Huntbase definition puts edges in each node's `parents: [{id, branch, kind}]`, not as a separate edge list. `branch` maps `on_true|on_false|default` → `on_supports|on_refutes|default`.
 - **Three fidelity tiers (SPEC §2).** Tier 1 native Markdown, Tier 2 `~~~yaml` attribute blocks (parsed by `_extract_inner_yaml`), Tier 3 raw ` ```hunt-json `. A decompiler must prefer Tier 1, spill to Tier 2, fall back to Tier 3, and **never drop data** — preserve unknown keys through both directions.
@@ -86,6 +88,7 @@ Key invariants when editing:
 
 Format-level: edges resolve, queries have `target=`, `if~:` has an `indeterminate:` branch (error), agent steps have `tools` + `max_iterations` (warn), actions are `approval: required` (warn), reachability, severity ordinal, guardrail vocabulary (error) and relaxation (warn), numeric confidence (warn), `unavailable: → end` (error).
 Run results are a separate entry point: `results.py::validate_result`, reached by `validate` when the input has a `hunt_result` root.
+Format-level, 0.7: parameter types and indicator `from:` (§3.7), `prevalence`/`baseline` shape (§5.7), `role` vocab, portable-block language, `handoff: promote-to-detection` with no `detection-candidate` (§5.8).
 Format-level, 0.6: `hunt:` vocab (§3.3), `scenario`/`coverage` structure (§3.4 — stage without coverage and unresolved `covered` steps are errors), `blind_spots` ids and references (§3.5 — dangling reference is an error), query contract vocab and `verified: none` on `tlp: clear` (§5.5), `silence:` closes-on-silence (§5.6), target telemetry planes (§6), `provenance` shape (§3.6). All warn except where noted.
 Huntbase-profile-only: `while:` and `run:` are errors; `switch:` and `$var` dataflow are warnings naming the documented substitution. Keep profile-specific checks behind the `profile == "huntbase"` branch so `--profile format` stays neutral.
 MISP-profile-only (`misp.py::misp_issues`): info-level "moved" notices for legacy `misp:` classification keys, off-vocabulary legacy values, query language with no `hunt-ex:query-language` mapping, no target that maps to a telemetry plane, no ATT&CK label.

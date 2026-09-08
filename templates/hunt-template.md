@@ -18,6 +18,17 @@ references:
   - name: <source>
     url: <url>
 
+# --- Part of a series? Related hunts? (SPEC §3.8) -----------------------------
+# One hypothesis per file — these are how the files point at each other.
+# series:  { slug: <series-slug>, index: 1, total: 3, title: <part title> }
+# related:
+#   - { hunt: <sibling-slug-or-url>, relation: precedes }   # follows | sibling |
+#                                                           # alternative | supersedes |
+#                                                           # superseded-by |
+#                                                           # out-of-scope-alternative
+#   - { hunt: <slug>, relation: out-of-scope-alternative,
+#       reason: <the hypothesis you chose not to test, and why> }
+
 # --- Provenance (SPEC §3.6) ---------------------------------------------------
 # provenance:
 #   authors: [{ name: <person or team>, org: <org> }]
@@ -52,7 +63,14 @@ guardrails:
 # --- Launch-time inputs ({{name}} placeholders in query bodies) --------------
 parameters:
   lookback: { type: duration, default: "14d" }
-  # add: { type: string | number | boolean | duration | host | ip | date | query | ... }
+  # scalars: string | number | integer | boolean | duration | date | host | ip |
+  #          domain | url | hash | email | path | user | query          (SPEC §3.7)
+  # typed indicator list — `from:` says where it came from, so it can be refreshed:
+  # c2_domains:
+  #   type: list[domain]
+  #   default: ["<domain>"]
+  #   from: { kind: article, ref: <url>, observed: 2026-01-01 }
+  #   # reference it as `in~ (split("{{c2_domains}}", ","))` — members join with commas
 
 # --- Abstract data sources / agents / people --------------------------------
 targets:
@@ -78,7 +96,9 @@ targets:
 <Short description of what this hunt does and how it flows.>
 
 ## <first-query-step>
-```<language> target=siem params=(days=lookback)
+# `role=` says what this query is for: scoping | baseline | enrichment | triage |
+# detection-candidate (the one worth promoting to a rule — SPEC §5.8).
+```<language> target=siem params=(days=lookback) role=scoping
 ~~~yaml
 # Optional, all of it (SPEC §5.5–§5.6). Say what the query reads so a runtime
 # can preflight it, whether it has ever run, what a hit looks like, and what an
@@ -89,9 +109,21 @@ verified: none                          # none | dry-run | executed
 expected: >
   <What a hit looks like. Say if zero rows is the common case.>
 silence: not_evidence_of_absence        # | evidence_of_absence
+# prevalence: { key: [<field>], by: <dimension>, rare_below: 3 }          # SPEC §5.7
+# baseline:   { window: "{{days}}", compare: prior_equal_window }         # | first_seen | new_this_window
 ~~~
 <your query — reference parameters as {{days}}>
 ```
+# A `detection-candidate` query may carry a portable twin: the native block is
+# what runs, this is what a peer can run without your stack (SPEC §5.8).
+# ```sigma portable
+# title: <rule title>
+# logsource: { product: windows, service: system }
+# detection:
+#   sel: { EventID: 4769 }
+#   condition: sel
+# level: medium
+# ```
 
 ## <decision-step>
 if: `<first-query-step>.rows > 0`
@@ -112,7 +144,9 @@ else: → end
 ```agent target=hunter
 objective: >
   <What the agent should determine, and the scope.>
-context: [<first-query-step>]           # prior step slugs whose results to read
+context: [<first-query-step>]           # prior step slugs whose results to read;
+                                        # cap a big one: { step: <slug>, rows: 200 }  (SPEC §8.2)
+cite: required                          # demand a citation per claim (§8.2)
 tools: [siem]                           # target slugs the agent may use
 success_criteria: >
   <The observable output that means this step is done.>

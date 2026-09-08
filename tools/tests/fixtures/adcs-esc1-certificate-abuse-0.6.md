@@ -42,19 +42,6 @@ hunt:                   # why this hunt exists and what happens after (SPEC §3.
     until every issuing CA's templates are hardened and audited.
   assets: [Active Directory, issuing CAs, tier-0 identities]
   review_by: 2027-03-01
-related:                # hypotheses this hunt deliberately does not test (SPEC §3.8)
-  - hunt: adcs-esc8-ntlm-relay-to-web-enrollment
-    relation: out-of-scope-alternative
-    reason: >
-      ESC8 (NTLM relay to the CA web-enrollment endpoint) reaches the same
-      outcome through a different mechanism and needs network telemetry this
-      hunt does not collect. It is a sibling hunt, not a branch of this one.
-  - hunt: adcs-template-misconfiguration-audit
-    relation: alternative
-    reason: >
-      A configuration audit answers "could this happen?" from the templates
-      alone; this hunt answers "did it happen?" from the request history. Run
-      the audit if you have no CA database to collect.
 scenario:               # the chain this hunt was written from, and what it can see of it (SPEC §3.4)
   summary: >
     Default machine-account quota → computer account → ESC1 enrolment naming a
@@ -260,10 +247,6 @@ pack: adcs.certificate-templates
 
 ## query-machine-account-creation
 ```kql target=siem params=(days=lookback)
-~~~yaml
-prevalence: { key: [Creator], by: NewComputer, rare_below: 2 }   # one non-delegated creator, one new computer, is enough
-baseline: { window: "{{days}}", compare: new_this_window }
-~~~
 // AA26-237A chain step 1: default ms-DS-MachineAccountQuota (10) lets any
 // authenticated user create a computer account, which then becomes the ESC1
 // enrollee. A computer account created by a non-delegated, non-admin user — and
@@ -332,7 +315,7 @@ SecurityEvent
 ```
 
 ## query-kdc-cert-mapping
-```kql target=siem params=(days=lookback) role=detection-candidate
+```kql target=siem params=(days=lookback)
 // KB5014754 KDC events. In Compatibility mode the KDC logs rather than blocks a
 // weak mapping, which makes these the highest-signal, lowest-volume artefact of
 // certificate impersonation available: 39 = certificate valid but not strongly
@@ -343,37 +326,6 @@ Event
 | where Source == "Microsoft-Windows-Kerberos-Key-Distribution-Center"
 | where EventID in (39, 40, 41)
 | project TimeGenerated, Computer, EventID, RenderedDescription
-```
-```sigma portable
-title: Weak certificate mapping observed by the KDC
-id: 6f1a5b52-3d4c-4a7e-9c1f-2b8e7d0a4c11
-status: experimental
-description: >
-  A domain controller logged a certificate that authenticated a principal
-  without a strong mapping (KB5014754). In Compatibility mode the KDC logs
-  rather than blocks, which makes these the highest-signal, lowest-volume
-  artefact of certificate-based impersonation available.
-references:
-  - https://support.microsoft.com/topic/kb5014754-certificate-based-authentication-changes-on-windows-domain-controllers-ad2c23b0-15d8-4340-a468-4d4f3b188f16
-  - https://www.cisa.gov/news-events/cybersecurity-advisories/aa26-237a
-author: huntbase.io
-date: 2026/09/08
-tags:
-  - attack.privilege-escalation
-  - attack.t1649
-logsource:
-  product: windows
-  service: system
-detection:
-  kdc:
-    Provider_Name: 'Microsoft-Windows-Kerberos-Key-Distribution-Center'
-    EventID:
-      - 39
-      - 41
-  condition: kdc
-falsepositives:
-  - Certificates issued before the SID extension was enforced, during a migration window
-level: high
 ```
 
 ## analyze-ca-requests
@@ -448,14 +400,8 @@ objective: >
   corroboration. Legitimate enrollment-agent and web-server enrollment will also
   show requester != subject — separate those out by template purpose and by
   whether the requester holds the Certificate Request Agent EKU.
-context:                                # SPEC §8.2 — cap the big result, hand the rest over whole
-  - { step: analyze-ca-requests, rows: 200 }
-  - enumerate-template-acls
-  - query-machine-account-creation
-  - query-ca-audit-events
-  - { step: query-certificate-logons, rows: 200 }
-  - query-kdc-cert-mapping
-cite: required
+context: [analyze-ca-requests, enumerate-template-acls, query-machine-account-creation,
+          query-ca-audit-events, query-certificate-logons, query-kdc-cert-mapping]
 tools: [cadb, ad, siem]
 success_criteria: >
   A single verdict of malicious | suspicious | benign for the run, plus a per-request

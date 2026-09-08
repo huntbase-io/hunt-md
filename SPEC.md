@@ -1,6 +1,6 @@
 # hunt.md — specification
 
-**Version:** 0.6 (draft) · **Status:** Working proposal · **Changes:** see `CHANGELOG.md`
+**Version:** 0.7 (draft) · **Status:** Working proposal · **Changes:** see `CHANGELOG.md`
 **License of this document:** see `LICENSE`
 
 `hunt.md` is an **open, portable, human-first Markdown format for threat-hunting
@@ -267,6 +267,97 @@ Prefer the ordinal words `critical | high | medium | low`. A numeric `severity`
 
 ---
 
+### 3.7 Typed parameters and indicator provenance
+
+A `parameters:` entry declares a launch-time input (§5.2). Its `type` is what a
+runtime uses to collect and validate the value:
+
+- **scalars** — `string`, `number`, `integer`, `boolean`, `duration`, `date`,
+  `host`/`hostname`, `ip`/`ipv4`/`ipv6`, `domain`, `url`/`uri`, `hash`, `email`,
+  `path`, `user`, `query`;
+- **typed lists** — `list[<member>]` where the member is one of `domain`, `ip`,
+  `ipv4`, `ipv6`, `hash`, `url`, `host`/`hostname`, `email`, `path`, `user`,
+  `string`.
+
+Indicator lists rot. A hunt that embeds them in the query text becomes a rule;
+one that parameterises them loses track of where they came from. An optional
+`from:` records that, so a runtime can refresh the list and a reader can see its
+age:
+
+```yaml
+parameters:
+  c2_domains:
+    type: list[domain]
+    default: ["tunnel.example.us.ngrok.example", "cdn.example.invalid"]
+    from:
+      kind: article        # stix-collection | misp-event | feed | article | advisory | incident | manual
+      ref: https://…       # collection id, event uuid, feed name or URL
+      observed: 2026-05-11
+```
+
+**Substitution.** A list parameter substitutes as its members joined by `,`, so
+a query written against the portable placeholder keeps working
+(`where name in~ (split("{{c2_domains}}", ","))`). A runtime MAY offer a native
+list binding as well; the comma form is the contract every profile supports.
+
+Lint: an unknown scalar type or list member warns (the value is kept); a
+malformed `from:` warns. `from:` is *expected* on the member types that rot
+between campaigns — `domain`, `ip`, `ipv4`, `ipv6`, `url`, `hash` — and a list
+of those without it warns; a list of tool paths, hostnames or usernames ages far
+more slowly and is not held to the same rule (recording `from:` on one is still
+good practice). The `quality` profile (§13) warns when a volatile list's
+`from.observed` is more than a year old.
+
+### 3.8 Related hunts and series
+
+A long intrusion chain is better hunted as two or three focused hunts than one
+shallow one, and hunt.md is deliberately **one hypothesis per file**. That only
+works if the files can point at each other.
+
+```yaml
+series:                        # this file's place in a deliberate sequence
+  slug: adcs-escalation
+  index: 2
+  total: 3
+  title: ADCS escalation, part 2 — enrolment and use
+related:
+  - { hunt: adcs-esc1-template-discovery, relation: precedes }
+  - { hunt: adcs-esc8-relay, relation: sibling }
+  - { hunt: https://example.org/hunts/old-adcs.md, relation: supersedes,
+      reason: "Replaced by the CA-database approach; the old one relied on 4886 auditing." }
+```
+
+| relation | meaning |
+|---|---|
+| `precedes` / `follows` | ordered parts of one investigation |
+| `sibling` | independent hypotheses about the same activity |
+| `alternative` | a different way to test the same hypothesis |
+| `supersedes` / `superseded-by` | one replaces the other |
+| `out-of-scope-alternative` | a hypothesis this hunt deliberately does **not** test, and why |
+
+`out-of-scope-alternative` is where a hypothesis the author *chose not to test*
+lives — real analytic content that previously had nowhere to go. `reason:` is
+expected on it, and on either `supersedes` direction.
+
+`hunt:` is a slug in the same library, a path, or a URL. Lint: `index ≤ total`
+(error); an off-vocabulary relation warns; a missing `reason` where one is
+expected warns; a duplicate relation warns. When the linter is given the
+library's slugs — the reference CLI passes the sibling `.md` files of the file
+being linted — a bare slug that names nothing in it warns for the relations a
+reader *navigates* (`precedes`, `follows`, `sibling`, either `supersedes`
+direction) and is an info note for `alternative` and
+`out-of-scope-alternative`, which may legitimately name a hunt nobody has
+written yet.
+
+Profiles: MISP export carries the series position and each relation as an
+annotated event attribute, and the hypothesis object's local id follows
+`series.index` (`H2` for part 2). On import, an event carrying several
+`threat-hunt-hypothesis` objects becomes several files rather than one lossy
+one: `huntmd convert event.json --split -o hunts/` writes one hunt per
+hypothesis — each with only the queries that declare its `hypothesis-id` — wired
+together with `series:` and `sibling` relations. Without `--split` the first
+hypothesis is converted and the rest are declared under `related:`.
+
 ## 4. Steps and step kinds
 
 Each `##` heading is one step; the heading text is its **slug** (stable
@@ -451,6 +542,95 @@ that says nothing is linted exactly as before.
 
 ---
 
+### 5.7 Prevalence and baseline — the stack-count-and-compare move
+
+The single most common hunting move — count a value across the fleet, flag the
+rare ones, compare to a prior window — has had no representation: it is written
+as an arbitrary `GROUP BY` and the runtime cannot help. Two optional Tier-2
+attributes declare the intent:
+
+````markdown
+```kql target=edr params=(days=lookback)
+~~~yaml
+prevalence:
+  key: [FolderPath, FileName]         # what is being counted
+  by: DeviceName                      # the distinct-count dimension
+  rare_below: 3                       # flag values seen on fewer than N hosts
+baseline:
+  window: "{{days}}"                  # the period the comparison spans
+  compare: prior_equal_window         # prior_equal_window | first_seen | new_this_window
+~~~
+DeviceProcessEvents | summarize hosts=dcount(DeviceName) by FolderPath, FileName
+```
+````
+
+| `baseline.compare` | meaning |
+|---|---|
+| `prior_equal_window` | the same key over the preceding window of equal length; what is new or grew |
+| `first_seen` | the key's earliest occurrence in the source; what appeared during the window |
+| `new_this_window` | keys absent from all earlier data; a stricter first-seen |
+
+A runtime that can compute first-seen or a prior-window comparison natively does
+so from the declaration; one that cannot runs the query as written — the query
+is still the ground truth. The Huntbase definition carries both as named
+`primitive_config` keys. Lint: shape only (warn). The `quality` profile (§13)
+warns when no query step declares `prevalence` or contains an aggregation — a
+hunt that never asks "how common is this?" is a rule.
+
+### 5.8 Query role and the paired portable form
+
+A hunt with several queries does not say which one *is* the detection. An
+optional `role=` in the info string does:
+
+| role | meaning |
+|---|---|
+| `scoping` | narrows the estate to where the hypothesis could hold |
+| `baseline` | establishes what normal looks like (usually with `prevalence`, §5.7) |
+| `enrichment` | adds context to candidates found elsewhere |
+| `triage` | separates candidates for a human or agent decision |
+| `detection-candidate` | the query worth promoting to a standing rule |
+
+A query that is worth promoting is usually worth *sharing*, and the native
+dialect is the part a peer cannot use. So a query step may carry a second fence
+flagged `portable`: the native block is what runs, the portable block is what
+travels.
+
+````markdown
+## kdc-weak-cert-mapping
+```kql target=siem role=detection-candidate
+Event | where Source == "Microsoft-Windows-Kerberos-Key-Distribution-Center" | where EventID in (39, 41)
+```
+```sigma portable
+title: Weak certificate mapping observed by the KDC
+logsource: { product: windows, service: system }
+detection:
+  kdc: { Provider_Name: 'Microsoft-Windows-Kerberos-Key-Distribution-Center', EventID: [39, 41] }
+  condition: kdc
+level: high
+```
+````
+
+The `portable` flag is what makes the second fence a twin rather than a
+redefinition — without it, a later fence still replaces the step's query, as it
+always did, so no existing document changes meaning. Portable languages:
+`sigma`, `yara`, `yara-l`, `stix`, `suricata`, `snort`.
+
+Lint: an off-vocabulary `role` warns; a portable block in a non-portable
+language, or an empty one, warns. `hunt.handoff: promote-to-detection` (§3.3)
+with no `detection-candidate` query is an info note by default and a warning
+under the `quality` profile — the hunt has promised a promotion without saying
+what gets promoted, but `handoff` predates `role`, so an existing hunt is
+notified rather than newly warned. A portable block on a step that is not the
+detection candidate is likewise a note.
+
+Profiles: the definition and CACAO carry the twin verbatim
+(`primitive_config.portable`, `x_hunt_portable`). MISP emits it as its own
+standard `sigma`/`yara` object, linked `tests` → the hypothesis and
+`derived-from` → the `threat-hunt-query` — which is what upstream guidance asks
+for when detection logic is portable. On import, a `sigma`/`yara` object that
+names the query it came from is restored as that step's twin rather than a
+separate step.
+
 ## 6. Targets (data sources, agents, people)
 
 Declared once in frontmatter `targets:` and referenced by slug. A target is
@@ -599,7 +779,7 @@ max_iterations: 8
 ````
 
 `objective`, `tools` (a target-slug allowlist), `success_criteria`,
-`max_iterations`, `in`/`out`. The runtime binds `target=hunter` to whatever agent
+`max_iterations`, `in`/`out`, plus `context` and `cite` (§8.2). The runtime binds `target=hunter` to whatever agent
 it runs (see profiles). Output variables let downstream deterministic steps
 consume agent results exactly like query results (the hybrid hinge).
 
@@ -651,6 +831,41 @@ SHOULD say so rather than claim the property.
 
 ---
 
+### 8.2 Context budget and citation demand
+
+`context:` names the prior steps whose results the agent reads. A runtime has to
+decide *how much* of a large result to hand over, and today it guesses. An entry
+may therefore be an object with a row budget, and the step may state what it
+demands back:
+
+````markdown
+```agent target=hunter
+objective: …
+context:
+  - { step: analyze-ca-requests, rows: 200 }   # the big one: cap it
+  - enumerate-template-acls                    # small; hand it all over
+tools: [cadb, ad]
+cite: required
+max_iterations: 12
+```
+````
+
+Both entry forms are valid and may be mixed: a bare name means "all of it", an
+object caps it at `rows`. A truncating runtime MUST tell the agent that the
+result was truncated — a silently shortened result is telemetry the agent
+believes it examined in full, which is the §8.1 `missing_data` failure wearing a
+different hat.
+
+`cite: required | optional` makes the citation demand explicit at the step. It
+is redundant with the default `evidence: citation_required` guardrail (§8.1) and
+that is the point: a step may demand citations even in a document that relaxed
+the guardrail, and a reader sees the demand without resolving the guardrail
+chain.
+
+Lint: an unknown key in a context entry warns; a non-positive `rows` warns; an
+off-vocabulary `cite` warns; a context entry naming a step that does not exist
+warns when it carries a row budget (0.7 syntax) and is noted otherwise.
+
 ## 9. Tasks & actions
 - ` ```manual target=<role> ` → a `task` step (human instruction text).
 - ` ```action target=<slug> ` → an `action` step (a change/response). Actions
@@ -679,21 +894,24 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | document | `playbook { id, name, description, metadata }` |
 | `## slug` | `step { id, kind, slug, config, edges[] }` |
 | query block | `step.kind=query`, `config={query_language, query, params}` |
-| ` ```agent ` | `step.kind=agent`, `config={objective, tools, in, out, success_criteria, max_iterations}` |
+| ` ```agent ` | `step.kind=agent`, `config={objective, tools, context, cite, in, out, success_criteria, max_iterations}` (§8.2) |
 | `if/if~/switch/while` | `step.kind=decision|loop` |
 | ` ```manual ` / ` ```action ` | `step.kind=task | action` |
 | `→` / `then/else/indeterminate` | `edge { to, branch: on_true|on_false|default }` |
 | `parallel/join` | parallel edges + a merge edge |
-| `parameters:` | `parameters[] { name, type, default? }` |
+| `parameters:` | `parameters[] { name, type, default?, from? }` (§3.7) |
 | `targets:` | `targets[] { slug, category|agent|role, bindings{} }` |
 | `labels: attack.*` | `attack_techniques[]` |
 | `rationale:` / `analysis:` | `playbook.rationale`, `playbook.analysis` — prose on the hypothesis (§3.1) |
 | `provenance:` | `provenance { authors[], source{system, ref, imported}, generated{by, model, from, gates[]} }` (§3.6) |
+| `series:` / `related:` | `series { slug, index, total, title }`, `related[] { hunt, relation, reason }` (§3.8) |
 | `hunt:` | `hunt { trigger, methodology, applicability, handoff, justification, assets, review_by }` (§3.3) |
 | `scenario:` / `coverage:` | `scenario { summary, stages[] }`, `coverage[] { stage, status, steps[], reason, blind_spot }` (§3.4) |
 | `blind_spots:` | `blind_spots[] { id, stage, requires, question, risk, owner, remediation }` (§3.5) |
 | query `~~~yaml` `source/reads/verified/verified_at` | `step.config { source, reads[], verified, verified_at }` (§5.5) |
 | query `~~~yaml` `expected/silence` | `step.config { expected, silence }` (§5.6) |
+| query `~~~yaml` `prevalence/baseline` | `step.config { prevalence{key, by, rare_below}, baseline{window, compare} }` (§5.7) |
+| query `role=` / ` ```<lang> portable ` | `step.role`, `step.portable { language, body }` (§5.8) |
 | `unavailable: → x (blind_spot: id)` | `edge { branch: on_unavailable }` + `step.blind_spot` (§7.2) |
 | `targets.*.telemetry` | `targets[].telemetry[]` — declared or derived from category (§6) |
 | `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |

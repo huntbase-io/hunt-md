@@ -74,6 +74,20 @@ _TEMPLATES = {
         "threat-hunting",
         "A platform-native hunting query used to test a hypothesis. Use this object for SPL, KQL, EQL, and similar query languages. When the detection logic is portable, prefer the standard MISP sigma or yara object instead and link it to the hypothesis with a 'tests' Object Reference.",
     ),
+    # Portable detection content (SPEC §5.8) rides in MISP's own standard
+    # objects, which is what upstream guidance asks for.
+    "sigma": (
+        "aa21a3cd-ab2c-442a-9999-a5e6626591ec",
+        "2",
+        "misc",
+        "An object describing a Sigma rule (or a Sigma rule name).",
+    ),
+    "yara": (
+        "b5acf82e-ecca-4868-82fe-9dbdf4d808c3",
+        "9",
+        "misc",
+        "An object describing a YARA rule (or a YARA rule name), its supported YARA version, and optional test-sample hashes. Test samples are true-positive by default; set false-positive=true when needed.",
+    ),
     "threat-hunt-finding": (
         "ce3ab17c-9ac5-47fb-bad5-48d368568437",
         "1",
@@ -324,11 +338,19 @@ def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None
     return _object("threat-hunt-context", ns, "context", attrs)
 
 
+def _hypothesis_id(pb: Playbook) -> str:
+    """``H<n>`` from `series.index` (SPEC §3.8), so the parts of one series keep
+    distinct local ids when they are shared into the same event."""
+    series = pb.meta.get("series")
+    idx = series.get("index") if isinstance(series, dict) else None
+    return f"H{idx}" if isinstance(idx, int) and idx > 0 else "H1"
+
+
 def _hypothesis_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None) -> dict:
     a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, "hypothesis", rel, val), **kw)  # noqa: E731
     hyp = str(pb.meta.get("hypothesis") or "").strip()
     attrs = [
-        a("hypothesis-id", "H1"),
+        a("hypothesis-id", _hypothesis_id(pb)),
         a("hypothesis", hyp or "TODO: hypothesis"),
         a("scope", "In-Scope"),
     ]
@@ -369,7 +391,7 @@ def _query_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict:
     a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, f"query:{s.slug}", rel, val), **kw)  # noqa: E731
     lang = (s.lang or "").lower()
     attrs = [
-        a("hypothesis-id", "H1"),
+        a("hypothesis-id", _hypothesis_id(pb)),
         a("query", s.body.rstrip("\n"), comment=f"hunt.md step: {s.slug}"),
         a("query-language", _LANG_TO_OBJECT_LABEL.get(lang, lang.upper() if lang else "Other")),
     ]
@@ -379,6 +401,8 @@ def _query_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict:
     for product in _bindings(target):
         attrs.append(a("platform", product))
     notes = []
+    if s.attrs.get("role"):
+        notes.append(f"role: {s.attrs['role']}")
     if _step_description(s):
         notes.append(_step_description(s))
     if s.params:
@@ -388,9 +412,51 @@ def _query_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict:
     return _object("threat-hunt-query", ns, f"query:{s.slug}", attrs, comment=f"hunt.md step `{s.slug}`")
 
 
+#: hunt.md portable language → (MISP object name, rule relation, name relation).
+_PORTABLE_OBJECT = {
+    "sigma": ("sigma", "sigma", "sigma-rule-name"),
+    "yara": ("yara", "yara", "yara-rule-name"),
+}
+
+
+def _portable_object(pb: Playbook, ns: uuid.UUID, s: Step) -> dict | None:
+    """A paired portable block (SPEC §5.8) as MISP's own sigma/yara object.
+
+    Upstream guidance is explicit: when the detection logic is portable, prefer
+    the standard object and link it to the hypothesis with ``tests``. So the
+    native query stays a ``threat-hunt-query`` and this travels beside it.
+    """
+    portable = s.portable if isinstance(s.portable, dict) else None
+    if not portable or not str(portable.get("body") or "").strip():
+        return None
+    mapping = _PORTABLE_OBJECT.get(str(portable.get("language") or "").lower())
+    if mapping is None:
+        return None
+    obj_name, rule_rel, name_rel = mapping
+    key = f"portable:{s.slug}"
+    a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, key, rel, val), **kw)  # noqa: E731
+    body = str(portable["body"]).rstrip("\n")
+    title = ""
+    for line in body.splitlines():
+        if line.strip().lower().startswith("title:"):
+            title = line.split(":", 1)[1].strip()
+            break
+    attrs = [a(rule_rel, body)]
+    if title:
+        attrs.append(a(name_rel, title))
+    context = f"Portable form of hunt.md step `{s.slug}`; the native {(s.lang or 'query').upper()} block is what ran."
+    attrs.append(a("context", context))
+    for ref in pb.meta.get("references") or []:
+        if isinstance(ref, dict) and ref.get("url"):
+            attrs.append(a("reference", str(ref["url"]), type_="link"))
+            break
+    return _object(obj_name, ns, key, attrs, comment=f"hunt.md step `{s.slug}` (portable)")
+
+
 def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, list[dict]]:
     """A ``threat-hunt-finding`` from a SPEC §12 run result, plus the outcome tags."""
     r = result.get("hunt_result") or result
+    _ = pb
     a = lambda rel, val, **kw: _attr(rel, val, uid=_attr_uid(ns, f"finding:{r.get('run', '')}", rel, val), **kw)  # noqa: E731
     disposition = str(r.get("disposition") or "inconclusive")
     hunt_ex_outcome, obj_outcome = _DISPOSITION_OUTCOME.get(disposition, ("inconclusive", "Inconclusive"))
@@ -423,7 +489,7 @@ def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, li
         parts.append(f"Not examined — {m.get('target')}: {str(m.get('impact', '')).strip()}")
 
     attrs = [
-        a("hypothesis-id", "H1"),
+        a("hypothesis-id", _hypothesis_id(pb)),
         a("outcome", obj_outcome),
         a("conclusion", "\n".join(parts)),
     ]
@@ -441,6 +507,38 @@ def _finding_object(pb: Playbook, ns: uuid.UUID, result: dict) -> tuple[dict, li
     if str(r.get("handoff") or "") in _HUNT_EX["handoff"]:
         tags.append(_tag("handoff", str(r["handoff"])))
     return obj, tags
+
+
+#: `threat-hunt-context.status` → MISP's own ``workflow:state`` (HUNT-EX docs
+#: recommend mirroring it, so a peer can filter by how finished a hunt is).
+_STATUS_WORKFLOW = {
+    "planned": "incomplete",
+    "in progress": "ongoing",
+    "ongoing": "ongoing",
+    "concluded": "complete",
+    "complete": "complete",
+    "abandoned": "cancelled",
+}
+
+#: `T1649 — Steal or Forge Authentication Certificates` inside a reference name.
+_TECHNIQUE_WITH_NAME = re.compile(r"\b(T\d{4}(?:\.\d{3})?)\b\s*[—\-–:]\s*([A-Za-z][^|(\[]{2,80})")
+
+
+def _attack_pattern_names(meta: dict[str, Any]) -> dict[str, str]:
+    """technique id → its name, read out of the hunt's own ``references:``.
+
+    MISP's galaxy tag needs the technique *name*, which ``labels:`` doesn't
+    carry. Rather than vendor an ATT&CK table, read the name from a reference
+    the author already wrote (``MITRE ATT&CK T1649 — Steal or Forge …``).
+    """
+    names: dict[str, str] = {}
+    for ref in meta.get("references") or []:
+        blob = f"{ref.get('name', '')}" if isinstance(ref, dict) else str(ref)
+        for tid, name in _TECHNIQUE_WITH_NAME.findall(blob):
+            cleaned = name.strip().rstrip(".").strip()
+            if cleaned and tid.upper() not in names:
+                names[tid.upper()] = cleaned
+    return names
 
 
 def _event_tags(pb: Playbook, misp: dict, result_tags: list[dict]) -> list[dict]:
@@ -465,6 +563,15 @@ def _event_tags(pb: Playbook, misp: dict, result_tags: list[dict]) -> list[dict]
         if ql not in seen_langs:
             seen_langs.append(ql)
             tags.append(_tag("query-language", ql))
+    # MISP's own galaxy tag, where the technique name is knowable.
+    names = _attack_pattern_names(pb.meta)
+    for tid in _attack_ids(pb.meta):
+        if tid in names:
+            tags.append({"name": f'misp-galaxy:mitre-attack-pattern="{names[tid]} - {tid}"'})
+    status = str(misp.get("status") or ("Concluded" if result_tags else "Planned"))
+    workflow = _STATUS_WORKFLOW.get(status.strip().lower())
+    if workflow:
+        tags.append({"name": f'workflow:state="{workflow}"'})
     tags.extend(result_tags)
     for extra in misp.get("tags") or []:
         tags.append({"name": str(extra)})
@@ -504,6 +611,11 @@ def playbook_to_misp(
         q = _query_object(pb, ns, s)
         _reference(q, ns, "tests", hypothesis["uuid"], comment="query tests hypothesis H1")
         objects.append(q)
+        portable = _portable_object(pb, ns, s)
+        if portable is not None:
+            _reference(portable, ns, "tests", hypothesis["uuid"], comment="portable rule tests hypothesis H1")
+            _reference(portable, ns, "derived-from", q["uuid"], comment=f"portable form of the {s.lang or 'native'} query")
+            objects.append(portable)
 
     result_tags: list[dict] = []
     if result:
@@ -522,6 +634,9 @@ def playbook_to_misp(
     )
     attachment.pop("object_relation")
 
+    # A pinned date keeps re-exports byte-stable (fixtures drifted daily on
+    # today's date). Explicit argument wins, then the hunt's own `created:`.
+    stamp = date or str(pb.meta.get("date") or pb.meta.get("created") or "").strip()[:10] or _now().date().isoformat()
     tlp = _tlp(pb.meta) or "amber"
     distribution = misp.get("distribution")
     if distribution is None:
@@ -531,7 +646,7 @@ def playbook_to_misp(
     event: dict[str, Any] = {
         "uuid": str(ns),
         "info": pb.name or "Untitled hunt",
-        "date": date or _now().date().isoformat(),
+        "date": stamp,
         "distribution": str(distribution),
         "threat_level_id": str(threat),
         "analysis": "2" if result else "0",
@@ -547,6 +662,29 @@ def playbook_to_misp(
                 | {"category": "External analysis"}
             )
             event["Attribute"][-1].pop("object_relation")
+    # Related hunts and the series position (SPEC §3.8). MISP has no hunt-linkage
+    # object, so these travel as annotated attributes a peer can read and follow.
+    series = pb.meta.get("series")
+    if isinstance(series, dict) and series.get("slug"):
+        event["Attribute"].append(
+            _attr(None, f"{series.get('slug')} part {series.get('index', '?')}/{series.get('total', '?')}",
+                  uid=_uid(ns, "attr", "series"), comment=f"hunt.md series: {series.get('title') or series.get('slug')}")
+        )
+        event["Attribute"][-1].pop("object_relation")
+    for entry in pb.meta.get("related") or []:
+        if not isinstance(entry, dict) or not entry.get("hunt"):
+            continue
+        ref_value = str(entry["hunt"])
+        is_url = "://" in ref_value
+        comment = f"related hunt ({entry.get('relation', 'related')})"
+        if entry.get("reason"):
+            comment += f": {entry['reason']}"
+        event["Attribute"].append(
+            _attr(None, ref_value, type_="link" if is_url else "text",
+                  uid=_uid(ns, "attr", "related", ref_value), comment=comment.strip())
+            | ({"category": "External analysis"} if is_url else {})
+        )
+        event["Attribute"][-1].pop("object_relation")
     return {"Event": event}
 
 
@@ -562,9 +700,34 @@ def markdown_to_misp(text: str, *, result: dict | None = None, date: str | None 
 
 
 def is_misp_event(defn: Any) -> bool:
-    """A MISP event: ``{"Event": {...}}`` or a bare event with ``Object``/``Attribute`` and ``info``."""
+    """A MISP event: ``{"Event": {...}}`` or a bare event that really looks like one."""
     ev = _find_event(defn)
     return ev is not None
+
+
+#: Keys that make a document something else entirely — a run result, a Huntbase
+#: definition, a CACAO playbook. Seeing one means "not a MISP event", whatever
+#: else the document happens to contain.
+_NOT_AN_EVENT = ("hunt_result", "nodes", "workflow", "playbook_types")
+
+
+def _looks_like_bare_event(d: dict[str, Any]) -> bool:
+    """A bare event (no ``Event`` wrapper) needs more than an ``info`` key.
+
+    ``info`` + ``Object``/``Attribute`` alone matched a stray YAML that happened
+    to use those names, so require the collections to hold things shaped like
+    MISP objects/attributes, and ``info`` to be text.
+    """
+    if any(k in d for k in _NOT_AN_EVENT) or not isinstance(d.get("info"), str):
+        return False
+    objects = d.get("Object")
+    attributes = d.get("Attribute")
+    if isinstance(objects, list) and objects:
+        return all(isinstance(o, dict) and isinstance(o.get("name"), str) for o in objects)
+    if isinstance(attributes, list) and attributes:
+        return all(isinstance(a, dict) and isinstance(a.get("type"), str) for a in attributes)
+    # Empty collections are legal on a real event, but only alongside a uuid.
+    return (isinstance(objects, list) or isinstance(attributes, list)) and isinstance(d.get("uuid"), str)
 
 
 def _find_event(defn: Any) -> dict[str, Any] | None:
@@ -574,9 +737,19 @@ def _find_event(defn: Any) -> dict[str, Any] | None:
         return defn["Event"]
     if isinstance(defn.get("response"), list) and defn["response"] and isinstance(defn["response"][0], dict):
         return _find_event(defn["response"][0])
-    if "info" in defn and ("Object" in defn or "Attribute" in defn):
+    if _looks_like_bare_event(defn):
         return defn
     return None
+
+
+def find_events(defn: Any) -> list[dict[str, Any]]:
+    """Every event in the document — a ``restSearch`` response carries many."""
+    if isinstance(defn, dict) and isinstance(defn.get("response"), list):
+        out = [ev for item in defn["response"] if (ev := _find_event(item)) is not None]
+        if out:
+            return out
+    ev = _find_event(defn)
+    return [ev] if ev is not None else []
 
 
 def _obj_attrs(obj: dict) -> dict[str, list[str]]:
@@ -607,7 +780,59 @@ def misp_to_source(defn: Any) -> str | None:
     return None
 
 
-def misp_to_playbook(defn: Any) -> Playbook:
+#: A sigma ``logsource`` → (target name, hunt.md target category). Categories
+#: are the SPEC §6 ones, so an imported draft resolves to a telemetry plane
+#: instead of guessing "siem" for everything.
+_LOGSOURCE_CATEGORY = {
+    "process_creation": "endpoint", "image_load": "endpoint", "file_event": "endpoint",
+    "registry_set": "endpoint", "registry_add": "endpoint", "registry_event": "endpoint",
+    "ps_script": "endpoint", "driver_load": "endpoint", "create_remote_thread": "endpoint",
+    "dns_query": "network", "network_connection": "network", "firewall": "network", "proxy": "network",
+    "webserver": "network",
+}
+_LOGSOURCE_PRODUCT = {
+    "windows": "endpoint", "linux": "endpoint", "macos": "endpoint",
+    "azure": "cloud-control-plane", "aws": "cloud-control-plane", "gcp": "cloud-control-plane",
+    "m365": "saas", "okta": "identity", "onelogin": "identity", "github": "saas", "google_workspace": "saas",
+    "zeek": "network", "cisco": "network", "paloalto": "network",
+}
+
+
+def _logsource_target(sigma_body: str) -> tuple[str | None, str | None]:
+    """Read a sigma rule's ``logsource`` and name the source it needs.
+
+    The importer used to guess "SIEM"/`category: siem` for every sigma object;
+    the rule itself says which product and telemetry it reads.
+    """
+    block: dict[str, str] = {}
+    in_logsource = False
+    for raw in (sigma_body or "").splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if re.match(r"^logsource\s*:", stripped):
+            in_logsource = True
+            inline = stripped.split(":", 1)[1].strip()
+            for k, v in re.findall(r"([a-z_]+)\s*:\s*([A-Za-z0-9_./-]+)", inline):
+                block[k] = v
+            continue
+        if in_logsource:
+            if not raw.startswith((" ", "\t")):
+                break
+            m = re.match(r"^\s+([a-z_]+)\s*:\s*(.+)$", raw)
+            if m:
+                block[m.group(1)] = m.group(2).strip().strip("'\"")
+    if not block:
+        return None, None
+    product = (block.get("product") or "").lower()
+    category = (block.get("category") or "").lower()
+    service = (block.get("service") or "").lower()
+    plane = _LOGSOURCE_CATEGORY.get(category) or _LOGSOURCE_PRODUCT.get(product)
+    name = " ".join(w for w in (product.title() or None, (category or service).replace("_", " ") or None) if w).strip()
+    return (name or product.title() or None), plane
+
+
+def misp_to_playbook(defn: Any, *, hypothesis: int = 0) -> Playbook:
     """Reconstruct a Playbook from a MISP event.
 
     Prefers the attached source (exact). Otherwise builds a draft from the
@@ -630,14 +855,16 @@ def misp_to_playbook(defn: Any) -> Playbook:
 
     context = _obj_attrs(by_name.get("threat-hunt-context", [{}])[0])
     hyps = [_obj_attrs(o) for o in by_name.get("threat-hunt-hypothesis", [])]
-    hyp = hyps[0] if hyps else {}
+    index = hypothesis if 0 <= hypothesis < len(hyps) else 0
+    hyp = hyps[index] if hyps else {}
+    hyp_id = _first(hyp, "hypothesis-id") or ""
 
     pb = Playbook()
     pb.name = _first(context, "hunt-title") or str(ev.get("info") or "Imported hunt")
     meta: dict[str, Any] = {"type": "investigation", "name": pb.name}
 
     labels = ["hunt"]
-    for h in hyps:
+    for h in ([hyp] if hyps else []):
         for tid in h.get("attack-id") or []:
             for m in re.finditer(r"T\d{4}(?:\.\d{3})?", tid, re.I):
                 lab = f"attack.{m.group(0).lower()}"
@@ -652,12 +879,9 @@ def misp_to_playbook(defn: Any) -> Playbook:
     threat = str(ev.get("threat_level_id") or "")
     meta["severity"] = {"1": "high", "2": "medium", "3": "low"}.get(threat, "medium")
 
-    hypothesis_text = _first(hyp, "hypothesis")
-    if len(hyps) > 1:
-        hypothesis_text = (hypothesis_text or "") + "\n\nTODO: this event carried " + str(len(hyps)) + " hypotheses; hunt.md is one hypothesis per file — split the others: " + " | ".join(
-            (_first(h, "hypothesis-id") or "?") + ": " + (_first(h, "hypothesis") or "")[:80] for h in hyps[1:]
-        )
-    meta["hypothesis"] = hypothesis_text or "TODO: state the hypothesis (event had no threat-hunt-hypothesis object)"
+    meta["hypothesis"] = _first(hyp, "hypothesis") or "TODO: state the hypothesis (event had no threat-hunt-hypothesis object)"
+    if _first(hyp, "scope") and "out" in str(_first(hyp, "scope")).lower():
+        meta["hunt"] = {"trigger": "prior-hunt"}  # an out-of-scope hypothesis someone chose not to test
 
     refs = []
     for a in ev.get("Attribute") or []:
@@ -670,7 +894,7 @@ def misp_to_playbook(defn: Any) -> Playbook:
     targets: dict[str, dict[str, Any]] = {}
     ds_slug: dict[str, str] = {}
 
-    def target_for(name: str | None, platform: str | None) -> str:
+    def target_for(name: str | None, platform: str | None, *, category: str | None = None) -> str:
         key = name or platform or "source"
         if key in ds_slug:
             return ds_slug[key]
@@ -678,7 +902,8 @@ def misp_to_playbook(defn: Any) -> Playbook:
         base, n = slug, 2
         while slug in targets:
             slug, n = f"{base}-{n}", n + 1
-        t: dict[str, Any] = {"category": "siem", "name": key}  # category is a guess — flagged in the TODO
+        # `category` is a guess unless a sigma logsource told us — flagged in the TODO.
+        t: dict[str, Any] = {"category": category or "siem", "name": key}
         targets[slug] = t
         ds_slug[key] = slug
         return slug
@@ -697,18 +922,52 @@ def misp_to_playbook(defn: Any) -> Playbook:
             s.attrs["description"] = desc
         steps.append(s)
 
-    for i, o in enumerate(by_name.get("threat-hunt-query", []), 1):
+    # One hypothesis per file (CONTRIBUTING), so take only this hypothesis's
+    # queries — the objects say which via `hypothesis-id`. An event whose queries
+    # declare no id belongs to the one hypothesis it has.
+    query_objects = by_name.get("threat-hunt-query", [])
+    if hyp_id and len(hyps) > 1:
+        owned = [o for o in query_objects if (_first(_obj_attrs(o), "hypothesis-id") or hyp_id) == hyp_id]
+        query_objects = owned or query_objects
+    for i, o in enumerate(query_objects, 1):
         a = _obj_attrs(o)
         ql = (_first(a, "query-language") or "other").strip().lower()
         lang = _HUNT_EX_TO_LANG.get(ql, re.sub(r"[^a-z0-9-]", "", ql) or "text")
         hint = str(o.get("comment") or "").removeprefix("hunt.md step").strip(" `:") or f"query-{i}"
         add_query(hint, lang, _first(a, "query") or "TODO: query text", target_for(_first(a, "data-source"), _first(a, "platform")), _first(a, "comment"))
-    for o in by_name.get("sigma", []):
-        a = _obj_attrs(o)
-        add_query(_first(a, "sigma-rule-name") or "sigma-rule", "sigma", _first(a, "sigma") or "", target_for("SIEM", None), _first(a, "context"))
-    for o in by_name.get("yara", []):
-        a = _obj_attrs(o)
-        add_query(_first(a, "yara-rule-name") or "yara-rule", "yara", _first(a, "yara") or "", target_for("Endpoint", None), _first(a, "context"))
+    # A portable rule that says which query it came from is that query's twin
+    # (SPEC §5.8), not a separate step; one that stands alone becomes a step.
+    query_uuid_to_slug = {
+        str(o.get("uuid")): steps[i].slug
+        for i, o in enumerate(query_objects)
+        if i < len(steps) and o.get("uuid")
+    }
+    for name, rule_rel, name_rel, fallback_target in (
+        ("sigma", "sigma", "sigma-rule-name", "SIEM"),
+        ("yara", "yara", "yara-rule-name", "Endpoint"),
+    ):
+        for o in by_name.get(name, []):
+            a = _obj_attrs(o)
+            derived = next(
+                (str(r.get("referenced_uuid")) for r in o.get("ObjectReference") or []
+                 if r.get("relationship_type") == "derived-from" and str(r.get("referenced_uuid")) in query_uuid_to_slug),
+                None,
+            )
+            body = _first(a, rule_rel) or ""
+            if derived:
+                owner = next((s for s in steps if s.slug == query_uuid_to_slug[derived]), None)
+                if owner is not None:
+                    owner.portable = {"language": name, "body": body}
+                    owner.attrs.setdefault("role", "detection-candidate")
+                    continue
+            source_name, source_category = _logsource_target(body) if name == "sigma" else ("Endpoint", "endpoint")
+            add_query(
+                _first(a, name_rel) or f"{name}-rule",
+                name,
+                body,
+                target_for(source_name or fallback_target, None, category=source_category),
+                _first(a, "context"),
+            )
 
     if not steps:
         for ds in context.get("data-source") or ["source"]:
@@ -718,6 +977,8 @@ def misp_to_playbook(defn: Any) -> Playbook:
 
     # Findings become a manual review step: the imported evidence a re-run should be compared against.
     findings = [_obj_attrs(o) for o in by_name.get("threat-hunt-finding", [])]
+    if hyp_id:  # a finding names the hypothesis it concludes; keep this one's
+        findings = [f for f in findings if hyp_id in (f.get("hypothesis-id") or [hyp_id])]
     if findings:
         f = findings[0]
         body = f"Prior finding ({_first(f, 'outcome') or '?'}): {_first(f, 'conclusion') or ''}".strip()
@@ -753,6 +1014,25 @@ def misp_to_playbook(defn: Any) -> Playbook:
     if contributors:
         provenance["authors"] = [str(c) for c in contributors]
     meta["provenance"] = provenance
+    # The other hypotheses in the event are sibling hunts, not a TODO in this
+    # one's text (SPEC §3.8): one hypothesis per file, declared and navigable.
+    if len(hyps) > 1:
+        event_slug = re.sub(r"[^a-z0-9]+", "-", str(ev.get("info") or "hunt").lower()).strip("-") or "hunt"
+        meta["series"] = {
+            "slug": event_slug,
+            "index": index + 1,
+            "total": len(hyps),
+            "title": str(ev.get("info") or "").strip() or event_slug,
+        }
+        meta["related"] = [
+            {
+                "hunt": f"{event_slug}-{(_first(h, 'hypothesis-id') or f'h{i + 1}').lower()}",
+                "relation": "sibling",
+                "reason": (_first(h, "hypothesis") or "")[:160],
+            }
+            for i, h in enumerate(hyps)
+            if i != index
+        ]
     if _first(hyp, "rationale"):
         meta["rationale"] = _first(hyp, "rationale")
     if _first(hyp, "analysis"):
@@ -779,6 +1059,47 @@ def misp_to_markdown(defn: Any) -> str:
     if source is not None:
         return source
     return playbook_to_markdown(misp_to_playbook(defn))
+
+
+def hypothesis_count(defn: Any) -> int:
+    """How many ``threat-hunt-hypothesis`` objects the event carries."""
+    ev = _find_event(defn)
+    if ev is None or misp_to_source(defn) is not None:
+        return 1
+    return sum(1 for o in ev.get("Object") or [] if str(o.get("name")) == "threat-hunt-hypothesis") or 1
+
+
+def misp_to_markdowns(defn: Any) -> list[tuple[str, str]]:
+    """``[(filename, hunt.md), …]`` — one file per hypothesis (SPEC §3.8).
+
+    hunt.md is one hypothesis per file, so an event carrying H1…Hn imports as n
+    linked files rather than one lossy document. An event with the exact source
+    attached (or a single hypothesis) yields one file, unchanged.
+    """
+    out: list[tuple[str, str]] = []
+    taken: set[str] = set()
+
+    def unique(name: str) -> str:
+        stem, n = name[:-3], 2
+        while name in taken:
+            name, n = f"{stem}-{n}.md", n + 1
+        taken.add(name)
+        return name
+
+    # A restSearch response carries many events; each becomes its own file(s).
+    for event in find_events(defn) or [None]:
+        wrapped: Any = {"Event": event} if event is not None else defn
+        source = misp_to_source(wrapped)
+        if source is not None:
+            out.append((unique(f"{_slug(parse_markdown(source))}.md"), source))
+            continue
+        n = hypothesis_count(wrapped)
+        for i in range(n):
+            pb = misp_to_playbook(wrapped, hypothesis=i)
+            series = pb.meta.get("series") or {}
+            name = f"{series.get('slug')}-h{series.get('index')}.md" if n > 1 and series else f"{_slug(pb)}.md"
+            out.append((unique(name), playbook_to_markdown(pb)))
+    return out
 
 
 # --- lint (profile: misp) ---------------------------------------------------------

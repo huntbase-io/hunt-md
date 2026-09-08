@@ -36,6 +36,7 @@ huntmd convert  hunts/my-hunt.md --to misp --result runs/my-run.yaml   # adds a 
 
 # MISP event → hunt.md (exact if it carries the attachment, otherwise a TODO-marked draft)
 huntmd convert  my-hunt.misp.json
+huntmd convert  peer-event.misp.json --split -o hunts/   # one file per hypothesis (SPEC §3.8)
 
 # CACAO playbook (v1.x or v2.0) → hunt.md; the input format is detected by shape
 huntmd convert  some-playbook.json -o hunts/imported.md

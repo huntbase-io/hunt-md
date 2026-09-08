@@ -38,21 +38,9 @@ blind_spots:            # what each dead end costs (SPEC §3.5)
 references:
   - name: CISA AA23-320A — Scattered Spider (updated 2025-07-29)
     url: https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
-  - name: MITRE ATT&CK T1621 — Multi-Factor Authentication Request Generation
-    url: https://attack.mitre.org/techniques/T1621/
-  - name: MITRE ATT&CK T1219 — Remote Access Software
-    url: https://attack.mitre.org/techniques/T1219/
-  - name: "MITRE ATT&CK T1114.002 — Email Collection: Remote Email Collection"
-    url: https://attack.mitre.org/techniques/T1114/002/
-  - name: "MITRE ATT&CK T1484.002 — Domain or Tenant Policy Modification: Trust Modification"
-    url: https://attack.mitre.org/techniques/T1484/002/
 parameters:
   lookback:  { type: duration, default: "10d" }
-  rmm_tools:                  # SPEC §3.7: typed list + where it came from, so it can be refreshed
-    type: list[path]
-    default: [anydesk.exe, screenconnect.client.exe, teamviewer.exe, splashtop.exe,
-              fleetdeck_agent.exe, level.exe, tailscaled.exe, ngrok.exe, pulseway.exe]
-    from: { kind: advisory, ref: AA23-320A, observed: 2025-07-29 }
+  rmm_tools: { type: string,   default: "anydesk.exe,screenconnect.client.exe,teamviewer.exe,splashtop.exe,fleetdeck_agent.exe,level.exe,tailscaled.exe,ngrok.exe,pulseway.exe" }
 targets:
   # Abstract categories keep the hunt portable; the optional per-runtime binding
   # hint pins a concrete source when running on that platform.
@@ -105,56 +93,13 @@ AuditLogs
 ```
 
 ## query-rmm-installs
-```kql target=edr params=(days=lookback, tools=rmm_tools) role=detection-candidate
-~~~yaml
-prevalence: { key: [FileName, AccountName], by: DeviceName, rare_below: 2 }
-baseline: { window: "{{days}}", compare: first_seen }   # RMM appearing for the first time on a user's host is the tell
-~~~
+```kql target=edr params=(days=lookback, tools=rmm_tools)
 DeviceProcessEvents
 | where Timestamp > ago({{days}})
 | where FileName in~ (split("{{tools}}", ","))
 | where InitiatingProcessAccountName !in ("it-deploy-svc")   // sanctioned deployer
 | summarize first_seen=min(Timestamp), hosts=make_set(DeviceName)
     by FileName, AccountName
-```
-```sigma portable
-title: Commercial RMM tool executed outside the sanctioned deployment path
-id: 0d3f8c41-77b2-4e59-8a6d-5c9e1f2a3b47
-status: experimental
-description: >
-  Scattered Spider-style actors install commercial remote-management tooling
-  for persistence because it is signed, allowlisted and indistinguishable from
-  IT activity. The tool list travels with the hunt (AA23-320A) and needs
-  refreshing; the sanctioned deployer must be tuned per environment.
-references:
-  - https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a
-author: huntbase.io
-date: 2026/09/08
-tags:
-  - attack.command-and-control
-  - attack.t1219
-logsource:
-  category: process_creation
-  product: windows
-detection:
-  rmm:
-    Image|endswith:
-      - '\anydesk.exe'
-      - '\screenconnect.client.exe'
-      - '\teamviewer.exe'
-      - '\splashtop.exe'
-      - '\fleetdeck_agent.exe'
-      - '\level.exe'
-      - '\tailscaled.exe'
-      - '\ngrok.exe'
-      - '\pulseway.exe'
-  sanctioned:
-    ParentUser|contains: 'it-deploy-svc'
-  condition: rmm and not sanctioned
-falsepositives:
-  - Sanctioned IT deployment from a different service account than the one excluded
-  - A user who legitimately owns one of these tools for personal support work
-level: medium
 ```
 
 ## correlate-identities

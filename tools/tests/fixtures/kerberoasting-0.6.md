@@ -19,7 +19,7 @@ hunt:                   # why this hunt exists and what happens after (SPEC §3.
     invisible to MFA. Running this on a cadence is the control for that gap.
   assets: [service accounts, Active Directory]
 references:
-  - name: "MITRE ATT&CK T1558.003 — Steal or Forge Kerberos Tickets: Kerberoasting"
+  - name: MITRE ATT&CK T1558.003
     url: https://attack.mitre.org/techniques/T1558/003/
 parameters:
   lookback: { type: duration, default: "14d" }
@@ -36,11 +36,7 @@ offline cracking of service-account credentials. A query gathers the candidates,
 an agent triages burst-vs-legitimate, and the verdict routes response.
 
 ## enumerate-spn-requests
-```kql target=siem params=(days=lookback) role=baseline
-~~~yaml
-prevalence: { key: [Account], by: IpAddress, rare_below: 3 }   # an account roasted from many sources is the signal
-baseline: { window: "{{days}}", compare: prior_equal_window }
-~~~
+```kql target=siem params=(days=lookback)
 SecurityEvent
 | where TimeGenerated > ago({{days}})
 | where EventID == 4769 and TicketEncryptionType == "0x17"

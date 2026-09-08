@@ -232,7 +232,12 @@ def _playbook_variables(pb: Playbook) -> dict[str, Any]:
         if spec.get("type") and _cacao_var_type(spec["type"]) != str(spec["type"]).lower():
             entry["x_hunt_type"] = str(spec["type"])  # e.g. `duration`, which CACAO has no type for
         if spec.get("default") is not None:
-            entry["value"] = str(spec["default"])
+            # A typed indicator list keeps its members; CACAO has no list type,
+            # so the value is the comma-joined form and x_hunt_type says what it was.
+            entry["value"] = ",".join(str(v) for v in spec["default"]) if isinstance(spec["default"], list) else str(spec["default"])
+        for key, out_key in (("from", "x_hunt_from"), ("description", "description")):
+            if spec.get(key) is not None and out_key not in entry:
+                entry[out_key] = spec[key]
         variables[_var(name)] = entry
 
     for s in pb.steps:
@@ -266,6 +271,11 @@ def _cacao_var_type(t: Any) -> str:
         "date": "string",
         "duration": "string",
         "query": "string",
+        "domain": "domain-name",
+        "email": "email-addr",
+        "hash": "string",
+        "path": "string",
+        "user": "user-account",
     }
     return known.get(str(t).strip().lower(), "string")
 
@@ -284,9 +294,9 @@ def _declared_vars(s: Step, key: str) -> list[str]:
 #: Step attributes each kind carries in native CACAO fields; the rest travel in
 #: ``x_hunt_attrs`` on the workflow step (SPEC §2: never drop data).
 _CACAO_NATIVE_ATTRS = {
-    "query": {"target", "params", "description"},
-    "collection": {"target", "params", "description"},
-    "agent": {"target", "params", "description", "objective", "tools", "success_criteria", "max_iterations", "context"},
+    "query": {"target", "params", "description", "role"},
+    "collection": {"target", "params", "description", "role"},
+    "agent": {"target", "params", "description", "objective", "tools", "success_criteria", "max_iterations", "context", "cite"},
     "task": {"target", "params", "description"},
     "action": {"target", "params", "description", "approval"},
     "decision": {"target", "params", "description"},
@@ -314,6 +324,12 @@ def _commands(s: Step, params_as_vars: dict[str, str]) -> list[dict[str, Any]]:
         }
         if s.kind == "collection":
             cmd["collection"] = True
+        if s.attrs.get("role"):
+            cmd["x_hunt_role"] = str(s.attrs["role"])
+        if s.portable:
+            # The native block is what runs; the portable twin is what a peer
+            # can run without owning your stack (SPEC §5.8).
+            cmd["x_hunt_portable"] = s.portable
         if params_as_vars:
             cmd["parameters"] = params_as_vars
         return [cmd]
@@ -327,6 +343,7 @@ def _commands(s: Step, params_as_vars: dict[str, str]) -> list[dict[str, Any]]:
             ("success_criteria", "success_criteria"),
             ("max_iterations", "max_iterations"),
             ("context", "context"),
+            ("cite", "cite"),
         ):
             if key in s.attrs:
                 cmd[out_key] = s.attrs[key]
@@ -611,6 +628,9 @@ _COMMAND_KIND = {
 #: `__x__`, `$$x$$` and bare names all appear in the wild; normalise to `x`.
 _VAR_REF = re.compile(r"\$\$([A-Za-z0-9_.-]+)\$\$|__([A-Za-z0-9_.-]+)__")
 
+#: A `list[<member>]` parameter type (SPEC §3.7) — its CACAO value is comma-joined.
+_LIST_TYPE = re.compile(r"^list\[[a-z0-9-]+\]$", re.I)
+
 #: `T1566.001` / `techniques/T1566/001` inside a reference name or URL.
 _TECHNIQUE_IN_TEXT = re.compile(r"\b(T\d{4})[./]?(\d{3})?\b", re.I)
 
@@ -755,9 +775,13 @@ def _import_step(  # noqa: C901 - one dispatch per CACAO step type
         params = first.get("parameters")
         if isinstance(params, dict):
             step.params = {k: _clean_var(str(v)) for k, v in params.items()}
+        if first.get("x_hunt_role"):
+            step.attrs["role"] = str(first["x_hunt_role"])
+        if isinstance(first.get("x_hunt_portable"), dict):
+            step.portable = first["x_hunt_portable"]
     elif kind == "agent":
         step.attrs["objective"] = str(first.get("objective") or "")
-        for key in ("tools", "success_criteria", "max_iterations", "context"):
+        for key in ("tools", "success_criteria", "max_iterations", "context", "cite"):
             if key in first:
                 step.attrs[key] = first[key]
     elif kind in ("task", "action"):
@@ -985,11 +1009,15 @@ def _import_frontmatter(src: dict[str, Any], pb: Playbook, known_vars: set[str])
         spec = spec if isinstance(spec, dict) else {}
         if spec.get("external") is False:
             continue  # `$var` dataflow between steps, restored from the steps' in=/out=
-        entry: dict[str, Any] = {"type": spec.get("x_hunt_type") or "string"}
+        declared = spec.get("x_hunt_type") or "string"
+        entry: dict[str, Any] = {"type": declared}
         if spec.get("value") not in (None, ""):
-            entry["default"] = spec["value"]
+            value = str(spec["value"])
+            entry["default"] = [v.strip() for v in value.split(",") if v.strip()] if _LIST_TYPE.match(str(declared)) else spec["value"]
         if spec.get("description"):
             entry["description"] = spec["description"]
+        if isinstance(spec.get("x_hunt_from"), dict):
+            entry["from"] = spec["x_hunt_from"]
         parameters[_clean_var(name)] = entry
     if parameters:
         meta["parameters"] = parameters
