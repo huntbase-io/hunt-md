@@ -131,6 +131,53 @@ result defensible rather than wasted spend. A library index filters on the
 first; a report quotes the second. Linters warn on an off-vocabulary value and
 never reject; a missing `justification` is a `quality`-profile warning (§13).
 
+### 3.4 Scenario and coverage — which stages this hunt can see
+
+A hunt written from an intrusion report covers some stages of that intrusion
+and not others, and a reader cannot tell from the steps alone whether a missing
+stage was judged out of scope, could not be observed, or was forgotten. The
+`scenario:` block states the chain; `coverage:` says, per stage, what this hunt
+does about it. Both are optional; together they render as a table.
+
+```yaml
+scenario:
+  summary: MAQ abuse → ESC1 enrolment → PKINIT as a tier-0 identity → lateral movement
+  stages:
+    - slug: machine-account-creation
+      name: Attacker creates a computer account under the default quota
+      tactic: persistence                 # ATT&CK tactic short name; shape-checked only
+      techniques: [T1136.002]
+      observables: ["4741 from a non-delegated creator"]
+    - slug: esc1-enrolment
+      techniques: [T1649]
+    - slug: lateral-movement
+      techniques: [T1021]
+coverage:
+  - stage: machine-account-creation
+    status: covered              # covered | not_visible | out_of_scope | existing_rule
+    steps: [query-machine-account-creation]
+  - stage: esc1-enrolment
+    status: covered
+    steps: [collect-ca-database, analyze-ca-requests]
+  - stage: lateral-movement
+    status: not_visible
+    reason: "No lateral-movement telemetry in scope; needs 4624/4648 with logon type."
+    blind_spot: no-lateral-telemetry     # optional link to a §3.5 record
+```
+
+| status | meaning |
+|---|---|
+| `covered` | one or more named steps examine this stage; `steps:` is required and must resolve |
+| `not_visible` | the hunt cannot examine it — a telemetry or process gap; `reason:` expected, and a `blind_spot:` link is how it becomes a request (§3.5) |
+| `out_of_scope` | deliberately left to another hunt or control; `reason:` expected (link the other hunt in `related:` when it exists) |
+| `existing_rule` | a detection already covers it; the hunt does not repeat it |
+
+Lint: when either block is present, every stage slug appears in `coverage`
+(error); `covered` names real step slugs (error); `not_visible` /
+`out_of_scope` without a `reason` warns; an off-vocabulary status warns. The
+`quality` profile (§13) warns when fewer than two stages are covered — a
+one-stage hunt is a rule.
+
 ### 3.2 Severity
 Prefer the ordinal words `critical | high | medium | low`. A numeric `severity`
 (0–100, CACAO-style) is accepted; runtimes that are ordinal bucket it
@@ -490,6 +537,7 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `targets:` | `targets[] { slug, category|agent|role, bindings{} }` |
 | `labels: attack.*` | `attack_techniques[]` |
 | `hunt:` | `hunt { trigger, methodology, applicability, handoff, justification, assets, review_by }` (§3.3) |
+| `scenario:` / `coverage:` | `scenario { summary, stages[] }`, `coverage[] { stage, status, steps[], reason, blind_spot }` (§3.4) |
 | `targets.*.telemetry` | `targets[].telemetry[]` — declared or derived from category (§6) |
 | `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |
 | `unavailable:` | `edge { branch: on_unavailable }` (§7.2) |

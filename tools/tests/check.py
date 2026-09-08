@@ -556,6 +556,34 @@ for fx in sorted((ROOT / "examples" / "misp-export").glob("*.json")):
     report(f"examples/misp-export/{fx.name} imports + lints", is_misp_event(fev) and not ferr, "; ".join(ferr[:2]))
 report("attachment round-trip decodes utf-8", base64.b64decode(next(a["data"] for a in _ev["Attribute"] if a["type"] == "attachment")).decode() == _kb)
 
+print("\nscenario + coverage (SPEC §3.4)")
+_sc = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+scenario:
+  stages:
+    - {{slug: s1, techniques: [T1136.002]}}
+    - {{slug: s2, techniques: [{tech}]}}
+coverage:
+  - {{stage: s1, status: covered, steps: [{step}]}}
+{s2cov}---
+# t
+## q
+```kql target=siem
+x
+```
+→ end
+"""
+_sc_ok = _sc.format(tech="T1649", step="q", s2cov="  - {stage: s2, status: not_visible, reason: no sign-in logs}\n")
+report("well-formed scenario + coverage lints clean", not [i for i in validate_markdown(_sc_ok, profile="format") if i.level == "error"], str(validate_markdown(_sc_ok, profile="format")))
+report("a stage with no coverage entry is an error", any("has no coverage entry" in i.message for i in validate_markdown(_sc.format(tech="T1649", step="q", s2cov=""), profile="format")))
+report("covered must name a real step", any("does not exist" in i.message for i in validate_markdown(_sc.format(tech="T1649", step="nope", s2cov="  - {stage: s2, status: covered, steps: [q]}\n"), profile="format")))
+report("not_visible without a reason warns", any("no reason" in i.message for i in validate_markdown(_sc.format(tech="T1649", step="q", s2cov="  - {stage: s2, status: not_visible}\n"), profile="format")))
+report("a malformed technique id warns", any("not a Txxxx" in i.message for i in validate_markdown(_sc.format(tech="privesc", step="q", s2cov="  - {stage: s2, status: out_of_scope, reason: r}\n"), profile="format")))
+report("an unknown coverage stage is an error", any("not in scenario.stages" in i.message for i in validate_markdown(_sc_ok.replace("stage: s1", "stage: s9"), profile="format")))
+report("scenario/coverage reach the definition first-class", markdown_to_definition(_sc_ok)["hunt"]["meta"]["coverage"][0]["status"] == "covered")
+
 print("\nrun results (SPEC §12)")
 from huntmd.results import validate_result  # noqa: E402
 

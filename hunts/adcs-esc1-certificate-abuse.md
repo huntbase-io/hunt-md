@@ -27,6 +27,56 @@ hunt:                   # why this hunt exists and what happens after (SPEC §3.
     until every issuing CA's templates are hardened and audited.
   assets: [Active Directory, issuing CAs, tier-0 identities]
   review_by: 2027-03-01
+scenario:               # the chain this hunt was written from, and what it can see of it (SPEC §3.4)
+  summary: >
+    Default machine-account quota → computer account → ESC1 enrolment naming a
+    tier-0 UPN → PKINIT as that identity → lateral movement and cloud identity
+    (AA26-237A, both organisations).
+  stages:
+    - slug: machine-account-creation
+      name: Attacker creates a computer account under ms-DS-MachineAccountQuota
+      tactic: persistence
+      techniques: [T1136.002]
+      observables: ["4741 whose creator is not a delegated joiner", "4742 editing dNSHostName or SPN straight after"]
+    - slug: esc1-enrolment
+      name: Enrollee-supplied SAN naming another principal, issued or denied
+      tactic: privilege-escalation
+      techniques: [T1649]
+      observables: ["CA database request where RequesterName ≠ SAN/CommonName", "4886/4887/4888 with a SAN attribute"]
+    - slug: certificate-logon
+      name: PKINIT TGT for the impersonated identity
+      tactic: defense-evasion
+      techniques: [T1550.003, T1078.002]
+      observables: ["4768 with Certificate Information for a tier-0 account", "KDC 39/41"]
+    - slug: lateral-movement
+      name: Use of the obtained identity on other hosts
+      tactic: lateral-movement
+      techniques: [T1021]
+    - slug: cloud-pivot
+      name: Hybrid identity used to reach the cloud tenant
+      tactic: lateral-movement
+      techniques: [T1550.001]
+coverage:
+  - stage: machine-account-creation
+    status: covered
+    steps: [query-machine-account-creation]
+  - stage: esc1-enrolment
+    status: covered
+    steps: [collect-ca-database, enumerate-template-acls, query-ca-audit-events, analyze-ca-requests]
+  - stage: certificate-logon
+    status: covered
+    steps: [query-certificate-logons, query-kdc-cert-mapping]
+  - stage: lateral-movement
+    status: out_of_scope
+    reason: >
+      Once an identity is confirmed impersonated, host-to-host movement is the
+      incident's problem, not the hunt's; contain hands it to the incident
+      commander.
+  - stage: cloud-pivot
+    status: not_visible
+    reason: >
+      No cloud sign-in telemetry is in scope for this hunt; a hybrid-joined
+      impersonated identity reaching the tenant would not be seen here.
 references:
   - name: "GuidePoint Security — Hunting Abuse: Detecting Privilege Escalation Through the ADCS Database"
     url: https://www.guidepointsecurity.com/blog/detecting-privilege-escalaction-through-adcs/

@@ -118,6 +118,18 @@ _HUNTBASE_DSLS = {tag for tag, _, hb in LANGUAGES if hb}
 _KNOWN_DSLS = {tag for tag, _, _ in LANGUAGES}
 
 
+#: Scenario coverage status (SPEC §3.4): what the hunt says about each stage of
+#: the intrusion chain it was written from.
+COVERAGE_STATUS = ("covered", "not_visible", "out_of_scope", "existing_rule")
+_TECHNIQUE_ID = re.compile(r"^T\d{4}(?:\.\d{3})?$", re.I)
+
+
+def scenario_stages(meta: dict[str, Any]) -> list[dict[str, Any]]:
+    scenario = meta.get("scenario")
+    stages = scenario.get("stages") if isinstance(scenario, dict) else None
+    return [s for s in (stages or []) if isinstance(s, dict)] if isinstance(stages, list) else []
+
+
 def hunt_block(meta: dict[str, Any]) -> dict[str, Any]:
     """The ``hunt:`` block, with the deprecated ``misp:`` keys as a fallback.
 
@@ -728,7 +740,9 @@ def _config_for(s: Step) -> dict[str, Any]:
 
 
 #: Frontmatter keys the definition carries as first-class ``meta`` entries.
-_DEFINITION_META_KEYS = ("labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type", "hunt")
+_DEFINITION_META_KEYS = (
+    "labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type", "hunt", "scenario", "coverage",
+)
 
 
 def _hunt_meta(pb: Playbook) -> dict[str, Any]:
@@ -761,6 +775,8 @@ _FM_ORDER = (
     "severity",
     "hypothesis",
     "hunt",
+    "scenario",
+    "coverage",
     "references",
     "parameters",
     "targets",
@@ -1113,6 +1129,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_variables(pb)
     issues += _check_hunt_block(pb)
     issues += _check_telemetry(pb)
+    issues += _check_scenario(pb, profile)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1210,6 +1227,76 @@ def _check_hunt_block(pb: Playbook) -> list[Issue]:
             issues.append(Issue("warn", "", "hunt.assets should be a list of the business assets or processes at stake"))
         elif key == "review_by" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(value)):
             issues.append(Issue("warn", "", f"hunt.review_by '{value}' is not an ISO date (YYYY-MM-DD)"))
+    return issues
+
+
+def _check_scenario(pb: Playbook, profile: str) -> list[Issue]:
+    """`scenario:` + `coverage:` (SPEC §3.4): the chain is stated, and every stage says
+    whether this hunt covers it, can't see it, or chose not to."""
+    issues: list[Issue] = []
+    scenario = pb.meta.get("scenario")
+    coverage = pb.meta.get("coverage")
+    if scenario is None and coverage is None:
+        return issues
+    if scenario is not None and not isinstance(scenario, dict):
+        return [Issue("error", "", "scenario: must be a mapping with a stages: list")]
+    if coverage is not None and not isinstance(coverage, list):
+        return [Issue("error", "", "coverage: must be a list of {stage, status, …} entries")]
+
+    stages = scenario_stages(pb.meta)
+    stage_slugs: list[str] = []
+    for i, st in enumerate(stages):
+        slug = str(st.get("slug") or "")
+        if not slug:
+            issues.append(Issue("error", "", f"scenario.stages[{i}] has no slug"))
+            continue
+        if slug in stage_slugs:
+            issues.append(Issue("error", "", f"scenario stage '{slug}' is declared twice"))
+        stage_slugs.append(slug)
+        for tech in st.get("techniques") or []:
+            if not _TECHNIQUE_ID.match(str(tech)):
+                issues.append(Issue("warn", "", f"scenario stage '{slug}': technique '{tech}' is not a Txxxx[.yyy] id"))
+    if scenario is not None and not stages:
+        issues.append(Issue("warn", "", "scenario: has no stages — nothing for coverage: to refer to"))
+    if scenario is not None and coverage is None:
+        issues.append(Issue("warn", "", "scenario: without coverage: — say which stages this hunt covers, can't see, or left out"))
+    if coverage is None:
+        return issues
+    if scenario is None:
+        issues.append(Issue("warn", "", "coverage: without scenario: — the stages it names are undefined"))
+
+    slugs = {s.slug for s in pb.steps}
+    seen_stages: list[str] = []
+    covered = 0
+    for i, entry in enumerate(coverage):
+        if not isinstance(entry, dict):
+            issues.append(Issue("error", "", f"coverage[{i}] must be a mapping"))
+            continue
+        stage = str(entry.get("stage") or "")
+        status = str(entry.get("status") or "")
+        where = f"coverage[{stage or i}]"
+        if not stage:
+            issues.append(Issue("error", "", f"{where} has no stage"))
+        elif stage_slugs and stage not in stage_slugs:
+            issues.append(Issue("error", "", f"{where}: stage '{stage}' is not in scenario.stages"))
+        seen_stages.append(stage)
+        if status not in COVERAGE_STATUS:
+            issues.append(Issue("warn", "", f"{where}: status '{status}' not in {list(COVERAGE_STATUS)}"))
+        if status == "covered":
+            covered += 1
+            steps = entry.get("steps") or []
+            if not steps:
+                issues.append(Issue("error", "", f"{where}: status covered but no steps: name which steps cover it"))
+            for step in steps if isinstance(steps, list) else [steps]:
+                if str(step) not in slugs:
+                    issues.append(Issue("error", "", f"{where}: step '{step}' does not exist"))
+        elif status in ("not_visible", "out_of_scope") and not entry.get("reason"):
+            issues.append(Issue("warn", "", f"{where}: status {status} with no reason — say why, or the gap is invisible"))
+    for slug in stage_slugs:
+        if slug not in seen_stages:
+            issues.append(Issue("error", "", f"scenario stage '{slug}' has no coverage entry — covered, not_visible, out_of_scope or existing_rule?"))
+    if profile == "quality" and stage_slugs and covered < 2:
+        issues.append(Issue("warn", "", f"only {covered} of {len(stage_slugs)} scenario stages are covered — a one-stage hunt is a rule, not a hunt"))
     return issues
 
 
