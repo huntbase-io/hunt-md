@@ -150,6 +150,18 @@ def _external_references(meta: dict[str, Any]) -> list[dict[str, Any]]:
     return refs
 
 
+def _first_author(meta: dict[str, Any]) -> str | None:
+    """`provenance.authors[0]` as a string — the CACAO `created_by` identity seed."""
+    prov = meta.get("provenance")
+    authors = prov.get("authors") if isinstance(prov, dict) else None
+    if not isinstance(authors, list) or not authors:
+        return None
+    first = authors[0]
+    if isinstance(first, dict):
+        return " / ".join(str(first[k]) for k in ("name", "org") if first.get(k)) or None
+    return str(first)
+
+
 def _determinism(pb: Playbook) -> str:
     """SPEC §10 determinism label — compiler-emitted, author-immutable."""
     for s in pb.steps:
@@ -284,7 +296,7 @@ _CACAO_NATIVE_ATTRS = {
 #: the importer regenerates); everything else travels in ``x_hunt.frontmatter``.
 _CACAO_NATIVE_FRONTMATTER = {
     "id", "type", "name", "labels", "tlp", "severity", "hypothesis", "references", "parameters", "targets",
-    "guardrails", "created", "modified", "created_by", "x_cacao_source",
+    "guardrails", "created", "modified", "created_by", "x_cacao_source", "rationale", "analysis", "provenance",
 }
 
 
@@ -495,7 +507,7 @@ def playbook_to_cacao(pb: Playbook, *, created: str | None = None) -> dict[str, 
         "id": f"playbook--{pb_uuid}",
         "name": pb.name,
         "playbook_types": ["investigation"],
-        "created_by": f"identity--{uuid.uuid5(_NS, str(pb.meta.get('created_by') or 'hunt.md'))}",
+        "created_by": f"identity--{uuid.uuid5(_NS, str(pb.meta.get('created_by') or _first_author(pb.meta) or 'hunt.md'))}",
         "created": stamp,
         "modified": str(pb.meta.get("modified") or "") or stamp,
         "revoked": False,
@@ -539,6 +551,9 @@ def playbook_to_cacao(pb: Playbook, *, created: str | None = None) -> dict[str, 
         x_hunt["data_requirements"] = data_requirements
     if pb.meta.get("type"):
         x_hunt["hunt_type"] = pb.meta["type"]
+    for key in ("rationale", "analysis", "provenance"):
+        if pb.meta.get(key) is not None:
+            x_hunt[key] = pb.meta[key]
     passthrough = {k: v for k, v in pb.meta.items() if k not in _CACAO_NATIVE_FRONTMATTER}
     if passthrough:
         x_hunt["frontmatter"] = passthrough
@@ -987,6 +1002,9 @@ def _import_frontmatter(src: dict[str, Any], pb: Playbook, known_vars: set[str])
 
     if isinstance(x_hunt.get("guardrails"), dict):
         meta["guardrails"] = x_hunt["guardrails"]
+    for key in ("rationale", "analysis", "provenance"):
+        if x_hunt.get(key) is not None:
+            meta[key] = x_hunt[key]
     if isinstance(x_hunt.get("frontmatter"), dict):
         for k, v in x_hunt["frontmatter"].items():
             meta.setdefault(k, v)

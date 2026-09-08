@@ -207,6 +207,23 @@ def _telemetry(pb: Playbook) -> list[str]:
     return seen
 
 
+def _contributors(pb: Playbook, misp: dict[str, Any]) -> list[str]:
+    """`provenance.authors` (SPEC §3.6) plus any MISP-only `contributors`."""
+    out: list[str] = []
+    prov = pb.meta.get("provenance")
+    authors = prov.get("authors") if isinstance(prov, dict) else None
+    for a in authors if isinstance(authors, list) else []:
+        if isinstance(a, dict):
+            name = " / ".join(str(a[k]) for k in ("name", "org") if a.get(k))
+        else:
+            name = str(a)
+        if name:
+            out.append(name)
+    for c in misp.get("contributors") or misp.get("contributor") or []:
+        out.append(str(c))
+    return out
+
+
 def _query_steps(pb: Playbook) -> list[Step]:
     return [s for s in pb.steps if s.kind == "query" and s.body.strip()]
 
@@ -296,7 +313,7 @@ def _context_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | None
             if product not in tools:  # MISP de-duplicates identical values within an object anyway
                 tools.append(product)
     attrs.extend(a("tool", product) for product in tools)
-    for c in dict.fromkeys(misp.get("contributors") or misp.get("contributor") or []):
+    for c in dict.fromkeys(_contributors(pb, misp)):
         attrs.append(a("contributor", c))
     period = ((result or {}).get("hunt_result") or result or {}).get("period") if result else None
     period = period if isinstance(period, dict) else {}
@@ -317,11 +334,13 @@ def _hypothesis_object(pb: Playbook, ns: uuid.UUID, misp: dict, result: dict | N
     ]
     for tid in _attack_ids(pb.meta):
         attrs.append(a("attack-id", tid))
-    analysis = misp.get("analysis") or _flow_summary(pb)
+    # The author's own analytic narrative (SPEC §3.1) beats a synthesised flow summary.
+    analysis = str(pb.meta.get("analysis") or misp.get("analysis") or "").strip() or _flow_summary(pb)
     if analysis:
         attrs.append(a("analysis", analysis))
-    if misp.get("rationale"):
-        attrs.append(a("rationale", misp["rationale"]))
+    rationale = str(pb.meta.get("rationale") or misp.get("rationale") or "").strip()
+    if rationale:
+        attrs.append(a("rationale", rationale))
     attrs.append(a("status", "Tested" if result else "Not Started"))
     return _object("threat-hunt-hypothesis", ns, "hypothesis", attrs)
 
@@ -728,13 +747,21 @@ def misp_to_playbook(defn: Any) -> Playbook:
             if not (t.get("agent") or t.get("role") or t.get("individual")):
                 t["telemetry"] = planes if len(planes) > 1 else planes[0]
     meta["targets"] = targets
-    meta["misp"] = {"event": str(ev.get("uuid") or "")}
+    # Where this came from (SPEC §3.6) — the event uuid is the ref a re-export edits in place.
+    provenance: dict[str, Any] = {"source": {"system": "misp", "ref": str(ev.get("uuid") or "")}}
+    contributors = context.get("contributor") or []
+    if contributors:
+        provenance["authors"] = [str(c) for c in contributors]
+    meta["provenance"] = provenance
+    if _first(hyp, "rationale"):
+        meta["rationale"] = _first(hyp, "rationale")
+    if _first(hyp, "analysis"):
+        meta["analysis"] = _first(hyp, "analysis")
 
     pb.meta = meta
     pb.steps = steps
     purpose = _first(context, "purpose")
-    analysis = _first(hyp, "analysis")
-    desc = [p for p in (purpose, analysis) if p]
+    desc = [p for p in (purpose,) if p]
     desc.append(
         "TODO: imported from a MISP event — the objects carry queries and the hypothesis, not control flow. "
         "Add decisions/agent steps, and check each target's `category:` (guessed as siem)."

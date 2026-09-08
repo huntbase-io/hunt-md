@@ -372,8 +372,10 @@ that surfaced, so you don't rediscover it:
   objects in the event), `hypothesis:` and `attack.*` labels from the hypothesis
   object, `tlp:` from the tag, targets from the queries' `data-source`s, and a
   `threat-hunt-finding` as a `manual` review step so a re-run is compared against
-  what the peer found. HUNT-EX tags and the event UUID land in the `misp:` block
-  for provenance. Everything the objects can't say — decisions, agent steps,
+  what the peer found. HUNT-EX classification tags land in `hunt:`, telemetry
+  tags on the targets, and the event UUID in `provenance.source` (SPEC §3.6);
+  `contributor`, `rationale` and `analysis` come back as `provenance.authors`,
+  `rationale:` and `analysis:`. Everything the objects can't say — decisions, agent steps,
   target categories — is `TODO`-marked, and the draft lints clean so
   `huntmd validate` points at exactly what an author still owes.
 

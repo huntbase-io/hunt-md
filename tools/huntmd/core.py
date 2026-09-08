@@ -118,6 +118,10 @@ _HUNTBASE_DSLS = {tag for tag, _, hb in LANGUAGES if hb}
 _KNOWN_DSLS = {tag for tag, _, _ in LANGUAGES}
 
 
+#: Provenance (SPEC §3.6): who wrote it, where it came from, whether a machine drafted it.
+PROVENANCE_SOURCE_SYSTEMS = ("misp", "cacao", "huntbase", "url", "other")
+PROVENANCE_GATES = ("dry-run", "lint", "critic", "executed", "human-review")
+
 #: Scenario coverage status (SPEC §3.4): what the hunt says about each stage of
 #: the intrusion chain it was written from.
 COVERAGE_STATUS = ("covered", "not_visible", "out_of_scope", "existing_rule")
@@ -763,8 +767,8 @@ def _config_for(s: Step) -> dict[str, Any]:
 
 #: Frontmatter keys the definition carries as first-class ``meta`` entries.
 _DEFINITION_META_KEYS = (
-    "labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type", "hunt", "scenario", "coverage",
-    "blind_spots",
+    "labels", "severity", "tlp", "hypothesis", "rationale", "analysis", "references", "parameters", "targets", "type",
+    "hunt", "scenario", "coverage", "blind_spots", "provenance",
 )
 
 
@@ -797,6 +801,8 @@ _FM_ORDER = (
     "tlp",
     "severity",
     "hypothesis",
+    "rationale",
+    "analysis",
     "hunt",
     "scenario",
     "coverage",
@@ -804,6 +810,7 @@ _FM_ORDER = (
     "references",
     "parameters",
     "targets",
+    "provenance",
 )
 #: Attribute keys rendered by native syntax, so they never repeat in a Tier-2 block.
 _NATIVE_ATTRS = {
@@ -1164,6 +1171,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_blind_spots(pb, profile)
     issues += _check_query_contract(pb)
     issues += _check_silence(pb)
+    issues += _check_narrative_and_provenance(pb)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1377,6 +1385,52 @@ def _check_blind_spots(pb: Playbook, profile: str) -> list[Issue]:
             routes_unavailable = s.unavailable_to_end or any(e.frm == s.slug and e.branch == "on_unavailable" for e in pb.edges)
             if routes_unavailable:
                 issues.append(Issue("warn", s.slug, "unavailable: branch with no (blind_spot: …) — the dead end has no recorded cost"))
+    return issues
+
+
+def _check_narrative_and_provenance(pb: Playbook) -> list[Issue]:
+    """`rationale:` / `analysis:` are prose (SPEC §3.1); `provenance:` has a shape (§3.6)."""
+    issues: list[Issue] = []
+    for key in ("rationale", "analysis"):
+        if key in pb.meta and not isinstance(pb.meta[key], str):
+            issues.append(Issue("warn", "", f"{key}: should be prose (a folded scalar), not {type(pb.meta[key]).__name__}"))
+    prov = pb.meta.get("provenance")
+    if prov is None:
+        return issues
+    if not isinstance(prov, dict):
+        return [Issue("error", "", "provenance: must be a mapping {authors, source, generated}")]
+    for key in prov:
+        if key not in ("authors", "source", "generated"):
+            issues.append(Issue("warn", "", f"provenance.{key} is not a defined key [authors, source, generated] (kept verbatim)"))
+    authors = prov.get("authors")
+    if authors is not None:
+        if not isinstance(authors, list):
+            issues.append(Issue("warn", "", "provenance.authors should be a list of names or {name, org, contact}"))
+        else:
+            for a in authors:
+                if isinstance(a, dict) and not a.get("name"):
+                    issues.append(Issue("warn", "", "provenance.authors entry has no name"))
+    source = prov.get("source")
+    if source is not None:
+        if not isinstance(source, dict):
+            issues.append(Issue("warn", "", "provenance.source should be {system, ref, imported}"))
+        else:
+            if str(source.get("system", "")) not in PROVENANCE_SOURCE_SYSTEMS:
+                issues.append(Issue("warn", "", f"provenance.source.system '{source.get('system')}' not in {list(PROVENANCE_SOURCE_SYSTEMS)}"))
+            if not source.get("ref"):
+                issues.append(Issue("warn", "", "provenance.source has no ref (event uuid, playbook id or URL)"))
+            if source.get("imported") and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(source["imported"])):
+                issues.append(Issue("warn", "", f"provenance.source.imported '{source['imported']}' is not an ISO date"))
+    gen = prov.get("generated")
+    if gen is not None:
+        if not isinstance(gen, dict):
+            issues.append(Issue("warn", "", "provenance.generated should be {by, model, from, gates}"))
+        else:
+            if not gen.get("by"):
+                issues.append(Issue("warn", "", "provenance.generated has no by: — name the tool that drafted this hunt"))
+            for g in gen.get("gates") or []:
+                if str(g) not in PROVENANCE_GATES:
+                    issues.append(Issue("warn", "", f"provenance.generated.gates '{g}' not in {list(PROVENANCE_GATES)}"))
     return issues
 
 

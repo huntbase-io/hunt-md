@@ -74,6 +74,10 @@ severity: high                      # critical | high | medium | low  (or 0–10
 tlp: amber
 hypothesis: >
   Service accounts are being kerberoasted from non-admin workstations.
+rationale: >                        # why this hypothesis, why this scope (optional)
+  Sector reporting shows RC4 roasting preceding ransomware; our SPN estate is unaudited.
+analysis: >                         # the analytic approach: pivots, baselines, what falsifies it
+  Stack 4769/0x17 by account and source; a burst from many workstations refutes "backup job".
 hunt:                               # why the hunt exists, what happens after (§3.3)
   trigger: intel-report
   handoff: keep-as-periodic-hunt
@@ -90,8 +94,15 @@ targets:                            # abstract data sources / agents / people (�
   edr:    { category: endpoint,  name: EDR }
   hunter: { agent: true,         name: Hunt agent }     # generic agent — runtime binds it
   tier2:  { role: analyst,       name: Tier-2 analyst }
+provenance:                         # who, and where from (§3.6)
+  authors: [{ name: Hunt team, org: Example ISAC }]
 ---
 ```
+
+`rationale` and `analysis` are prose beside the hypothesis: *why this
+hypothesis and scope* and *how it is tested* — the pivots, the baselines, what
+would falsify it. Reviewers want them in a PR; sharing profiles carry them on
+the hypothesis object instead of synthesising a summary from the steps.
 
 Unknown frontmatter keys pass through (Tier 2) — the parser keeps them and
 every exporter carries them verbatim (`x_hunt_frontmatter` in a definition,
@@ -225,6 +236,29 @@ Aggregated across a library, blind spots are the demand signal for the next
 data source. Lint: ids unique (error); a reference to an undeclared id (error);
 an entry with no `requires` or `risk` warns; the `quality` profile warns on an
 `unavailable:` branch that names no blind spot.
+
+### 3.6 Provenance — who wrote it, where it came from, whether a machine drafted it
+
+```yaml
+provenance:
+  authors:                        # people or teams; a string or {name, org, contact}
+    - { name: ISAC hunt team, org: Example ISAC }
+  source:                         # when the hunt was imported or adapted
+    system: misp                  # misp | cacao | huntbase | url | other
+    ref: 2930ccb3-…               # event uuid / playbook id / URL
+    imported: 2026-08-18
+  generated:                      # when a tool drafted it
+    by: hunt-pipeline
+    model: <model id>
+    from: https://…               # the report it was generated from
+    gates: [dry-run, lint, critic, human-review]   # checks it passed
+```
+
+All optional. A public library can say which hunts were machine-drafted and
+what they passed; an importer records where a peer's hunt came from instead of
+stashing an id in a profile block. Profiles map `authors` to their own
+contributor field (MISP `contributor`, CACAO `created_by`) and carry the rest
+in their extension. Lint: shape and vocabulary warnings only.
 
 ### 3.2 Severity
 Prefer the ordinal words `critical | high | medium | low`. A numeric `severity`
@@ -653,6 +687,8 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `parameters:` | `parameters[] { name, type, default? }` |
 | `targets:` | `targets[] { slug, category|agent|role, bindings{} }` |
 | `labels: attack.*` | `attack_techniques[]` |
+| `rationale:` / `analysis:` | `playbook.rationale`, `playbook.analysis` — prose on the hypothesis (§3.1) |
+| `provenance:` | `provenance { authors[], source{system, ref, imported}, generated{by, model, from, gates[]} }` (§3.6) |
 | `hunt:` | `hunt { trigger, methodology, applicability, handoff, justification, assets, review_by }` (§3.3) |
 | `scenario:` / `coverage:` | `scenario { summary, stages[] }`, `coverage[] { stage, status, steps[], reason, blind_spot }` (§3.4) |
 | `blind_spots:` | `blind_spots[] { id, stage, requires, question, risk, owner, remediation }` (§3.5) |

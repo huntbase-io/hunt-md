@@ -546,7 +546,7 @@ report(
     and any(s.kind == "task" for s in _fpb.steps)
     and all(t.get("telemetry") == "saas" for t in _fpb.meta["targets"].values() if t.get("category"))
     and _fpb.meta["hunt"]["trigger"] == "sector-alert"
-    and _fpb.meta["misp"]["event"] == "11111111-2222-3333-4444-555555555555",
+    and _fpb.meta["provenance"]["source"] == {"system": "misp", "ref": "11111111-2222-3333-4444-555555555555"},
     "; ".join(_ferr[:2]) or _fmd[:300],
 )
 for fx in sorted((ROOT / "examples" / "misp-export").glob("*.json")):
@@ -555,6 +555,40 @@ for fx in sorted((ROOT / "examples" / "misp-export").glob("*.json")):
     ferr = [str(i) for i in validate_markdown(fmd, profile="format") if i.level == "error"]
     report(f"examples/misp-export/{fx.name} imports + lints", is_misp_event(fev) and not ferr, "; ".join(ferr[:2]))
 report("attachment round-trip decodes utf-8", base64.b64decode(next(a["data"] for a in _ev["Attribute"] if a["type"] == "attachment")).decode() == _kb)
+
+print("\nrationale, analysis, provenance (SPEC §3.1, §3.6)")
+_pv = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+rationale: why this hypothesis
+analysis: pivot from A to B, baseline C
+provenance:
+  authors: [{{name: Hunt team, org: Example}}, Solo Analyst]
+  source: {{system: {system}, ref: abc, imported: 2026-09-01}}
+  generated: {{by: pipeline, model: m, from: "https://x", gates: [{gate}]}}
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+---
+# t
+## q
+```kql target=siem
+x
+```
+→ end
+"""
+_pv_ok = _pv.format(system="misp", gate="dry-run")
+report("well-formed provenance lints clean", not [i for i in validate_markdown(_pv_ok, profile="format") if i.level != "info"], str(validate_markdown(_pv_ok, profile="format")))
+report("provenance.source.system off-vocabulary warns", any("source.system" in i.message for i in validate_markdown(_pv.format(system="carrier-pigeon", gate="lint"), profile="format")))
+report("generated.gates off-vocabulary warns", any("gates 'vibes'" in i.message for i in validate_markdown(_pv.format(system="url", gate="vibes"), profile="format")))
+_pv_ev = markdown_to_misp(_pv_ok)["Event"]
+_pv_ctx = next(o for o in _pv_ev["Object"] if o["name"] == "threat-hunt-context")
+_pv_hyp = next(o for o in _pv_ev["Object"] if o["name"] == "threat-hunt-hypothesis")
+report("provenance.authors export as MISP contributors", sorted(a["value"] for a in _pv_ctx["Attribute"] if a["object_relation"] == "contributor") == ["Hunt team / Example", "Solo Analyst"])
+report("rationale + analysis export on the hypothesis object (not a synthesised summary)", {a["object_relation"]: a["value"] for a in _pv_hyp["Attribute"]}.get("analysis") == "pivot from A to B, baseline C" and {a["object_relation"]: a["value"] for a in _pv_hyp["Attribute"]}.get("rationale") == "why this hypothesis")
+_pv_rt = parse_markdown(cacao_to_markdown(markdown_to_cacao(_pv_ok)))
+report("rationale/analysis/provenance survive md → CACAO → md", _pv_rt.meta.get("provenance") == parse_markdown(_pv_ok).meta["provenance"] and _pv_rt.meta.get("rationale") == "why this hypothesis")
+report("provenance.authors seeds the CACAO created_by identity", markdown_to_cacao(_pv_ok)["created_by"] != markdown_to_cacao(_pv_ok.replace("Hunt team", "Other team"))["created_by"])
 
 print("\nscenario + coverage (SPEC §3.4)")
 _sc = """---

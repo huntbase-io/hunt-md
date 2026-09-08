@@ -14,7 +14,22 @@ hypothesis: >
   certificate from a misconfigured ADCS template that permits an enrollee-supplied
   subject (ESC1), naming a higher-privileged identity, and has used the resulting
   certificate to authenticate as that identity via PKINIT.
-hunt:                   # why this hunt exists and what happens after (SPEC §3.1)
+rationale: >
+  ESC1 is the most common ADCS misconfiguration and the one CISA's red team
+  used at both AA26-237A organisations. The CA database is chosen as the
+  primary source over the event log because it records denied requests, needs
+  no logging enabled, and survives a CA rebuild that would erase the audit
+  trail. Other ESC variants are deliberately out of scope: they need
+  template-specific reasoning and belong in sibling hunts.
+analysis: >
+  Collect the ESE database from every issuing CA and the template ACLs from
+  the directory in parallel with the corroborating event queries; isolate
+  requests whose SAN or CommonName names a principal other than the
+  requester; let an agent correlate those against template flags,
+  machine-account creation and PKINIT logons. What falsifies the hypothesis is
+  a complete collection with zero such requests; what refutes a candidate is
+  an enrollment-agent or web-server template used as designed.
+hunt:                   # why this hunt exists and what happens after (SPEC §3.3)
   trigger: intel-report
   applicability: universal
   handoff: promote-to-detection
@@ -136,6 +151,13 @@ parameters:
   # Principals whose impersonation is a tier-0 event. Tune per environment.
   tier0_pattern: { type: string, default: "^(administrator|krbtgt|.*adm.*|.*[-_]da|.*[-_]ea)$" }
 
+provenance:
+  authors: [{ name: Huntbase, org: huntbase.io }]
+  generated:
+    by: claude-code
+    model: claude-fable-5-1
+    from: https://www.guidepointsecurity.com/blog/detecting-privilege-escalaction-through-adcs/
+    gates: [lint, human-review]   # queries have not been executed against a live estate (see verified: none)
 targets:
   ca:     { category: endpoint, name: Issuing CA host(s) }
   cadb:   { category: endpoint, name: "ADCS CA database (ESE, collected)" }

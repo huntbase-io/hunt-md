@@ -10,11 +10,21 @@ severity: high                          # critical | high | medium | low
 hypothesis: >
   <One or two sentences: the adversary behaviour you believe is present and
   why. This is what the hunt tests.>
+# rationale: >                          # optional: why this hypothesis and this scope
+#   <What made you pick this over the alternatives; what is deliberately out.>
+# analysis: >                           # optional: how it is tested — pivots, baselines, what falsifies it
+#   <The analytic approach a reviewer should be able to argue with.>
 references:
   - name: <source>
     url: <url>
 
-# --- Why this hunt exists (SPEC §3.1) ----------------------------------------
+# --- Provenance (SPEC §3.6) ---------------------------------------------------
+# provenance:
+#   authors: [{ name: <person or team>, org: <org> }]
+#   source: { system: misp, ref: <event uuid>, imported: 2026-01-01 }   # if imported/adapted
+#   generated: { by: <tool>, model: <id>, from: <url>, gates: [dry-run, lint, human-review] }
+
+# --- Why this hunt exists (SPEC §3.3) ----------------------------------------
 # Closed vocabularies shared with HUNT-EX, so a library can be filtered and a
 # negative result can still be justified upward. All optional.
 hunt:
