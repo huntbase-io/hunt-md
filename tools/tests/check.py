@@ -628,6 +628,51 @@ report("blind_spot annotation survives md → md", "(blind_spot: no-dns)" in _p2
 report("blind_spot annotation survives md → CACAO → md", parse_markdown(cacao_to_markdown(markdown_to_cacao(_bs_ok))).steps[0].attrs.get("blind_spot") == "no-dns")
 report("blind_spot annotation survives md → definition → md", next(s for s in parse_markdown(definition_to_markdown(markdown_to_definition(_bs_ok))).steps if s.slug == "judge").attrs.get("blind_spot") == "no-dns")
 
+print("\nquery verification contract + silence (SPEC §5.5, §5.6)")
+_qc = """---
+hypothesis: x
+tlp: {tlp}
+labels: [attack.t1000]
+targets:
+  siem: {{category: siem, name: SIEM, telemetry: [identity]}}
+  tier2: {{role: analyst, name: Analyst}}
+---
+# t
+## q
+```kql target=siem
+~~~yaml
+source: SecurityEvent
+reads: [EventID, Account]
+verified: {verified}
+verified_at: 2026-09-07
+expected: rows with EventID 4769
+silence: {silence}
+~~~
+x
+```
+## d
+if: `q.rows > 0`
+then: → review
+else: → {els}
+## review
+```manual target=tier2
+x
+```
+→ end
+"""
+_qc_ok = _qc.format(tlp="green", verified="dry-run", silence="not_evidence_of_absence", els="review")
+report("well-formed contract lints clean", not [i for i in validate_markdown(_qc_ok, profile="format") if i.level != "info"], str(validate_markdown(_qc_ok, profile="format")))
+report("verified off-vocabulary warns", any("verified 'maybe'" in i.message for i in validate_markdown(_qc_ok.replace("verified: dry-run", "verified: maybe"), profile="format")))
+report("verified: none on a tlp: clear hunt warns", any("public content" in i.message for i in validate_markdown(_qc.format(tlp="clear", verified="none", silence="not_evidence_of_absence", els="review"), profile="format")))
+report("silence off-vocabulary warns", any("silence 'maybe'" in i.message for i in validate_markdown(_qc_ok.replace("silence: not_evidence_of_absence", "silence: maybe"), profile="format")))
+report("else: → end on a not_evidence_of_absence source warns", any("closes the hunt on silence" in i.message for i in validate_markdown(_qc.format(tlp="green", verified="dry-run", silence="not_evidence_of_absence", els="end"), profile="format")))
+report("…but not when the source's silence is evidence", not any("closes the hunt on silence" in i.message for i in validate_markdown(_qc.format(tlp="green", verified="dry-run", silence="evidence_of_absence", els="end"), profile="format")))
+_nosil = _qc.format(tlp="green", verified="dry-run", silence="x", els="end").replace("silence: x\n", "")
+report("…and not when silence: was never written (0.5 hunts lint as before)", not any("closes the hunt on silence" in i.message for i in validate_markdown(_nosil, profile="format")))
+_pc = next(n for n in markdown_to_definition(_qc_ok)["nodes"] if n["id"] == "q")["primitive_config"]
+report("contract keys are named primitive_config keys for the runtime", _pc.get("reads") == ["EventID", "Account"] and _pc.get("verified") == "dry-run" and _pc.get("silence") == "not_evidence_of_absence" and "x_hunt_attrs" not in _pc)
+report("contract survives md → definition → md", parse_markdown(definition_to_markdown(markdown_to_definition(_qc_ok))).steps[0].attrs.get("reads") == ["EventID", "Account"])
+
 print("\nrun results (SPEC §12)")
 from huntmd.results import validate_result  # noqa: E402
 

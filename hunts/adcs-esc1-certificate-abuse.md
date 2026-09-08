@@ -244,6 +244,16 @@ SecurityEvent
 
 ## query-ca-audit-events
 ```kql target=siem params=(days=lookback)
+~~~yaml
+source: SecurityEvent
+reads: [TimeGenerated, Computer, EventID, SubjectUserName, WorkstationName, EventData]
+verified: none
+expected: >
+  4886/4887 rows whose Attributes carry a SAN naming a principal other than the
+  requester; 4888 rows are attempts. Zero rows is the common case even on an
+  abused CA, because this auditing is off by default.
+silence: not_evidence_of_absence
+~~~
 // Corroboration only. ADCS role-service auditing is OFF by default (it needs the
 // CA's AuditFilter plus "Audit Certification Services"), and it is the first
 // thing lost in a CA rebuild — so an empty result here is a telemetry gap, not
@@ -298,6 +308,17 @@ Event
 
 ## analyze-ca-requests
 ```sqlite target=cadb params=(since=window_start)
+~~~yaml
+source: Requests, RequestAttributes, Certificates (parsed CA database)
+reads: [RequestID, SubmittedWhen, ResolvedWhen, RequesterName, CommonName, Disposition, DispositionMessage,
+        AttributeName, AttributeValue, SerialNumber, CertificateHash, NotBefore, NotAfter, RevokedWhen]
+verified: none
+expected: >
+  One row per request whose SAN or CommonName names a different principal than
+  RequesterName, including denied ones. Enrollment-agent and web-server
+  templates produce legitimate rows; the agent separates those.
+silence: evidence_of_absence   # the CA database is complete for the window it holds — silence here means no such request
+~~~
 -- The ESC1 fingerprint, straight out of the CA database: the enrollee supplied a
 -- subject or SAN naming a principal other than the authenticated requester.
 -- Denied and failed requests (disposition 30/31) are kept deliberately — a failed

@@ -352,6 +352,69 @@ expressive and CACAO/SOAR-portable.
 than an ad-hoc query): body is `pack: <name>` or a tool-native spec, with the
 same `target=`/`params=` info-string.
 
+### 5.5 Verification contract — what a query reads, whether it has run
+
+A query block says which language it is in and which target it binds to, but
+not what it *reads*, so a runtime cannot preflight it and a reader cannot tell
+whether it has ever run. Four optional Tier-2 attributes close that gap:
+
+````markdown
+## rare-node-launches
+```kql target=edr params=(days=lookback)
+~~~yaml
+source: DeviceProcessEvents            # surface, table or index the query reads
+reads: [DeviceName, FolderPath, InitiatingProcessFileName, Timestamp]
+verified: dry-run                      # none | dry-run | executed
+verified_at: 2026-09-07
+~~~
+DeviceProcessEvents | where …
+```
+````
+
+`reads` lets a runtime check column availability before launch and lets a
+coverage report say, per column, what is missing. `verified` lets a library
+filter out never-run content; it is a claim about *this revision* of the query
+— the linter cannot know whether the query changed since `verified_at`, so
+drift is the author's to manage (the `quality` profile warns past a
+configurable age). Lint: off-vocabulary `verified` warns; `verified: none` on a
+`tlp: clear` hunt warns (public content should have been run somewhere);
+`verified_at` without `verified` warns.
+
+The Huntbase definition carries these as named `primitive_config` keys
+(`source`, `reads`, `verified`, `verified_at`) so the runtime can act on them;
+other profiles carry them as Tier-2 attributes.
+
+### 5.6 Expected signal and silence — what an empty result does not prove
+
+§7.2 separates "examined, undecided" from "could not examine" at decision
+level. A query step has no place to say what a hit looks like and what an empty
+result proves, and that is where most silent-benign mistakes are made. Two
+optional Tier-2 attributes:
+
+````markdown
+```kql target=siem
+~~~yaml
+expected: >
+  One or more 4886/4887 events whose Attributes carry a SAN naming a principal
+  other than the requester. Zero rows is the common case.
+silence: not_evidence_of_absence     # default | evidence_of_absence
+~~~
+…
+```
+````
+
+| value | meaning |
+|---|---|
+| `not_evidence_of_absence` | (default) the source may be incomplete for the window — off by default, retention rolled, partially onboarded — so zero rows says nothing about the behaviour |
+| `evidence_of_absence` | the source is complete for the window; zero rows means the behaviour did not occur where this source would see it |
+
+Lint: a decision whose `else:` reaches `end` (explicitly or by omission), and
+whose upstream query steps *all* declare `silence: not_evidence_of_absence`,
+warns — the hunt is closing on silence its own author said proves nothing.
+Route the `else:` to a review or collection step, or examine a source whose
+silence is evidence. The rule fires only when `silence:` was written; a hunt
+that says nothing is linted exactly as before.
+
 ---
 
 ## 6. Targets (data sources, agents, people)
@@ -593,6 +656,8 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `hunt:` | `hunt { trigger, methodology, applicability, handoff, justification, assets, review_by }` (§3.3) |
 | `scenario:` / `coverage:` | `scenario { summary, stages[] }`, `coverage[] { stage, status, steps[], reason, blind_spot }` (§3.4) |
 | `blind_spots:` | `blind_spots[] { id, stage, requires, question, risk, owner, remediation }` (§3.5) |
+| query `~~~yaml` `source/reads/verified/verified_at` | `step.config { source, reads[], verified, verified_at }` (§5.5) |
+| query `~~~yaml` `expected/silence` | `step.config { expected, silence }` (§5.6) |
 | `unavailable: → x (blind_spot: id)` | `edge { branch: on_unavailable }` + `step.blind_spot` (§7.2) |
 | `targets.*.telemetry` | `targets[].telemetry[]` — declared or derived from category (§6) |
 | `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |

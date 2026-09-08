@@ -69,6 +69,17 @@ targets:
 
 ## <first-query-step>
 ```<language> target=siem params=(days=lookback)
+~~~yaml
+# Optional, all of it (SPEC §5.5–§5.6). Say what the query reads so a runtime
+# can preflight it, whether it has ever run, what a hit looks like, and what an
+# empty result proves — `not_evidence_of_absence` unless the source is complete.
+source: <table or index>
+reads: [<column>, <column>]
+verified: none                          # none | dry-run | executed
+expected: >
+  <What a hit looks like. Say if zero rows is the common case.>
+silence: not_evidence_of_absence        # | evidence_of_absence
+~~~
 <your query — reference parameters as {{days}}>
 ```
 

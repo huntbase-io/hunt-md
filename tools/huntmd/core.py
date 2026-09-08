@@ -255,6 +255,12 @@ class Edge:
     kind: str = "sequence"  # sequence | merge
 
 
+#: Query-step verification contract (SPEC §5.5) and silence semantics (§5.6).
+VERIFIED = ("none", "dry-run", "executed")
+SILENCE = ("not_evidence_of_absence", "evidence_of_absence")
+_QUERY_CONTRACT_KEYS = ("source", "reads", "verified", "verified_at", "expected", "silence")
+
+
 @dataclass
 class Step:
     slug: str
@@ -273,6 +279,7 @@ class Step:
     # `unavailable: → end` closes a hunt on data it never examined (SPEC §7.2).
     # The edge itself vanishes (end is implicit), so the intent is recorded here.
     unavailable_to_end: bool = False
+    else_to_end: bool = False  # `else: → end` written explicitly (lint only; end is implicit in the IR)
     # switch/parallel/subplaybook (kept for round-trip + linting)
     branches: list[str] = field(default_factory=list)
     join: str | None = None
@@ -485,7 +492,9 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
                 out_edges.append((t, "on_supports", "sequence"))
         elif line.startswith("else:"):
             t = _target_of(line.split(":", 1)[1])
-            if t:
+            if t == "end":
+                step.else_to_end = True
+            elif t:
                 out_edges.append((t, "on_refutes", "sequence"))
         elif line.startswith("indeterminate:"):
             t = _target_of(line.split(":", 1)[1])
@@ -658,8 +667,8 @@ def _rewrite_placeholders(body: str, params: dict[str, str]) -> str:
 #: rides in ``x_hunt_attrs`` so the runtime ignores it and the exporter restores
 #: it (SPEC §2: spill to Tier 2, never drop).
 _DEFINITION_NATIVE_ATTRS = {
-    "query": {"target", "params"},
-    "collection": {"target", "params"},
+    "query": {"target", "params", *_QUERY_CONTRACT_KEYS},
+    "collection": {"target", "params", *_QUERY_CONTRACT_KEYS},
     "agent": {"objective", "tools", "context", "success_criteria", "max_iterations", "in", "out", "target", "params"},
     "decision": {"checkpoint_type", "target", "params"},
     "task": {"target", "params"},
@@ -702,6 +711,12 @@ def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
             # the runtime ignores this extra key, the exporter reads it back).
             if s.target:
                 node["primitive_config"]["target"] = s.target
+            # The verification contract (SPEC §5.5) and silence semantics (§5.6)
+            # are what a runtime preflights and reports on, so they are named
+            # keys rather than opaque passthrough.
+            for key in _QUERY_CONTRACT_KEYS:
+                if key in s.attrs:
+                    node["primitive_config"][key] = s.attrs[key]
             extra = _extra_attrs(s)
             if extra:
                 node["primitive_config"]["x_hunt_attrs"] = extra
@@ -1078,7 +1093,12 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             out.append("```")
         # Tier-2 attributes the definition carried verbatim come back as a
         # step-level attribute block (SPEC §4.2).
-        extra = (node.get("primitive_config") or {}).get("x_hunt_attrs") if ntype in ("query", "collection") else cfg.get("x_hunt_attrs")
+        if ntype in ("query", "collection"):
+            pc = node.get("primitive_config") or {}
+            extra = {k: pc[k] for k in _QUERY_CONTRACT_KEYS if k in pc}
+            extra.update(pc.get("x_hunt_attrs") or {} if isinstance(pc.get("x_hunt_attrs"), dict) else {})
+        else:
+            extra = cfg.get("x_hunt_attrs")
         if isinstance(extra, dict) and extra:
             out += ["~~~yaml", _dump(extra, sort_keys=False, allow_unicode=True).strip(), "~~~"]
         # transitions
@@ -1142,6 +1162,8 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_telemetry(pb)
     issues += _check_scenario(pb, profile)
     issues += _check_blind_spots(pb, profile)
+    issues += _check_query_contract(pb)
+    issues += _check_silence(pb)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1355,6 +1377,77 @@ def _check_blind_spots(pb: Playbook, profile: str) -> list[Issue]:
             routes_unavailable = s.unavailable_to_end or any(e.frm == s.slug and e.branch == "on_unavailable" for e in pb.edges)
             if routes_unavailable:
                 issues.append(Issue("warn", s.slug, "unavailable: branch with no (blind_spot: …) — the dead end has no recorded cost"))
+    return issues
+
+
+def _check_query_contract(pb: Playbook) -> list[Issue]:
+    """Verification contract on query/collection steps (SPEC §5.5)."""
+    issues: list[Issue] = []
+    tlp = str(pb.meta.get("tlp") or "").lower()
+    for s in pb.steps:
+        if s.kind not in ("query", "collection"):
+            continue
+        verified = s.attrs.get("verified")
+        if verified is not None and str(verified) not in VERIFIED:
+            issues.append(Issue("warn", s.slug, f"verified '{verified}' not in {list(VERIFIED)}"))
+        if verified is not None and str(verified) == "none" and tlp in ("clear", "white"):
+            issues.append(Issue("warn", s.slug, "verified: none on a tlp: clear hunt — public content should have been run somewhere"))
+        if "reads" in s.attrs and not isinstance(s.attrs["reads"], list):
+            issues.append(Issue("warn", s.slug, "reads: should be a list of the columns/fields the query depends on"))
+        va = s.attrs.get("verified_at")
+        if va is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(va)):
+            issues.append(Issue("warn", s.slug, f"verified_at '{va}' is not an ISO date (YYYY-MM-DD)"))
+        if "verified_at" in s.attrs and "verified" not in s.attrs:
+            issues.append(Issue("warn", s.slug, "verified_at without verified: — say how it was verified (dry-run | executed)"))
+        silence = s.attrs.get("silence")
+        if silence is not None and str(silence) not in SILENCE:
+            issues.append(Issue("warn", s.slug, f"silence '{silence}' not in {list(SILENCE)}"))
+        if "expected" in s.attrs and not isinstance(s.attrs["expected"], str):
+            issues.append(Issue("warn", s.slug, "expected: should be prose describing what a hit looks like"))
+    return issues
+
+
+def _ancestors(pb: Playbook, slug: str) -> set[str]:
+    parents: dict[str, list[str]] = {}
+    for e in pb.edges:
+        parents.setdefault(e.to, []).append(e.frm)
+    seen: set[str] = set()
+    stack = list(parents.get(slug, []))
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        stack.extend(parents.get(cur, []))
+    return seen
+
+
+def _check_silence(pb: Playbook) -> list[Issue]:
+    """A decision must not close the hunt on an empty result the author said
+    proves nothing (SPEC §5.6) — the step-level form of the `unavailable: → end`
+    rule. Fires only when `silence:` was written."""
+    issues: list[Issue] = []
+    by_slug = {s.slug: s for s in pb.steps}
+    for s in pb.steps:
+        if s.kind != "decision" or s.switch_cases:
+            continue
+        closes_on_else = not any(e.frm == s.slug and e.branch == "on_refutes" for e in pb.edges)
+        if not closes_on_else:
+            continue
+        sources = [by_slug[a] for a in _ancestors(pb, s.slug) if a in by_slug and by_slug[a].kind in ("query", "collection")]
+        if not sources:
+            continue
+        declared = [q for q in sources if "silence" in q.attrs]
+        if declared and all(str(q.attrs.get("silence")) == "not_evidence_of_absence" for q in sources if "silence" in q.attrs) and len(declared) == len(sources):
+            names = ", ".join(sorted(q.slug for q in sources))
+            issues.append(
+                Issue(
+                    "warn",
+                    s.slug,
+                    f"else: → end closes the hunt on silence from {names}, which declares silence: not_evidence_of_absence — "
+                    "route the else: to a review or collection step, or examine a source whose silence is evidence",
+                )
+            )
     return issues
 
 
