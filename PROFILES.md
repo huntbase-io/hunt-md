@@ -65,6 +65,7 @@ attachment (†) and the objects hold what HUNT-EX makes searchable.
 | **hypothesis** | ✍️ frontmatter | ✅ first-class | 📦 `x-hunt` * | 📦 `threat-hunt-hypothesis` | 📄 |
 | **ATT&CK techniques** | ✍️ `labels:` | ✅ first-class | 📦 `x-hunt` * | 📦 `attack-id` on the hypothesis | 📄 |
 | **data requirements** | ✍️ derived from `targets:` | ✅ pre-launch check | 📦 `x-hunt` * | 📦 `data-source`/`tool` + `hunt-ex:telemetry` | 📄 |
+| **unknown keys / attrs** (§2) | ✍️ any frontmatter key, any `~~~yaml` attr | 📦 `x_hunt_frontmatter` / `x_hunt_attrs` | 📦 `x-hunt.frontmatter` / `x_hunt_attrs` * | † | 📄 |
 | **human review / diff** | ✅ plain-text PR | — | — | — | ✅ |
 
 ✍️ native syntax · ✅ executes natively · ⚠️ executes via a documented substitution ·

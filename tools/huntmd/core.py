@@ -215,18 +215,29 @@ def _parse_info_string(info: str) -> tuple[str, dict[str, Any]]:
 
 
 def _extract_inner_yaml(body: str) -> tuple[dict[str, Any], str]:
-    """Pull a leading ``~~~yaml ... ~~~`` block out of a fenced-block body."""
+    """Pull a ``~~~yaml ... ~~~`` block out of a fenced-block body.
+
+    The block may lead the body (the common form for actions) or trail it (the
+    form SPEC §8.1 shows for a per-step guardrail override on an agent step).
+    """
     lines = body.splitlines()
     if lines and lines[0].strip().startswith("~~~"):
         for i in range(1, len(lines)):
             if lines[i].strip().startswith("~~~"):
-                inner = "\n".join(lines[1:i])
-                try:
-                    parsed = yaml.safe_load(inner) or {}
-                except yaml.YAMLError:
-                    parsed = {}
-                return (parsed if isinstance(parsed, dict) else {}), "\n".join(lines[i + 1 :]).strip()
+                return _yaml_dict("\n".join(lines[1:i])), "\n".join(lines[i + 1 :]).strip()
+    if lines and lines[-1].strip().startswith("~~~"):
+        for i in range(len(lines) - 2, -1, -1):
+            if lines[i].strip().startswith("~~~"):
+                return _yaml_dict("\n".join(lines[i + 1 : -1])), "\n".join(lines[:i]).strip()
     return {}, body
+
+
+def _yaml_dict(text: str) -> dict[str, Any]:
+    try:
+        parsed = yaml.safe_load(text) or {}
+    except yaml.YAMLError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _iter_sections(body: str):
@@ -517,6 +528,24 @@ def _rewrite_placeholders(body: str, params: dict[str, str]) -> str:
     return body
 
 
+#: Step attributes each kind carries natively in the definition; everything else
+#: rides in ``x_hunt_attrs`` so the runtime ignores it and the exporter restores
+#: it (SPEC §2: spill to Tier 2, never drop).
+_DEFINITION_NATIVE_ATTRS = {
+    "query": {"target", "params"},
+    "collection": {"target", "params"},
+    "agent": {"objective", "tools", "context", "success_criteria", "max_iterations", "in", "out", "target", "params"},
+    "decision": {"checkpoint_type", "target", "params"},
+    "task": {"target", "params"},
+    "action": {"approval", "track", "target", "params"},
+}
+
+
+def _extra_attrs(s: Step) -> dict[str, Any]:
+    native = _DEFINITION_NATIVE_ATTRS.get(s.kind, {"target", "params"})
+    return {k: v for k, v in s.attrs.items() if k not in native}
+
+
 def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
     parents: dict[str, list[dict[str, Any]]] = {}
     for e in pb.edges:
@@ -547,8 +576,14 @@ def playbook_to_definition(pb: Playbook) -> dict[str, Any]:
             # the runtime ignores this extra key, the exporter reads it back).
             if s.target:
                 node["primitive_config"]["target"] = s.target
+            extra = _extra_attrs(s)
+            if extra:
+                node["primitive_config"]["x_hunt_attrs"] = extra
         else:
             node["config"] = _config_for(s)
+            extra = _extra_attrs(s)
+            if extra:
+                node["config"]["x_hunt_attrs"] = extra
         if s.slug in parents:
             node["parents"] = parents[s.slug]
         nodes.append(node)
@@ -585,12 +620,21 @@ def _config_for(s: Step) -> dict[str, Any]:
     return {"body": s.body.strip(), **s.attrs}
 
 
+#: Frontmatter keys the definition carries as first-class ``meta`` entries.
+_DEFINITION_META_KEYS = ("labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type")
+
+
 def _hunt_meta(pb: Playbook) -> dict[str, Any]:
-    keep = ("labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type")
-    meta = {k: pb.meta[k] for k in keep if k in pb.meta}
+    meta = {k: pb.meta[k] for k in _DEFINITION_META_KEYS if k in pb.meta}
     # Always resolved, never omitted: a runtime must receive the safety posture
     # even when the author didn't write the block (SPEC §8.1).
     meta["guardrails"] = effective_guardrails(pb.meta)
+    # Everything else the author wrote travels verbatim (SPEC §2) — a profile
+    # block, a key from a newer spec revision, a private extension. The runtime
+    # ignores it; the exporter restores it.
+    extra = {k: v for k, v in pb.meta.items() if k not in _DEFINITION_META_KEYS and k != "guardrails"}
+    if extra:
+        meta["x_hunt_frontmatter"] = extra
     return meta
 
 
@@ -625,7 +669,7 @@ _NATIVE_ATTRS = {
     "out",
     "target",
     "params",
-    "description",
+    "track",
 }
 
 
@@ -685,8 +729,10 @@ def playbook_to_markdown(pb: Playbook) -> str:
         elif s.kind in ("task", "action"):
             block = "manual" if s.kind == "task" else "action"
             out.append(f"```{block}{info}")
-            if s.kind == "action" and s.attrs.get("approval"):
-                out += ["~~~yaml", f"approval: {s.attrs['approval']}", "~~~"]
+            if s.kind == "action":
+                gate = {k: s.attrs[k] for k in ("approval", "track") if s.attrs.get(k)}
+                if gate:
+                    out += ["~~~yaml", _dump(gate, sort_keys=False).strip(), "~~~"]
             out += [s.body.rstrip(), "```"]
         elif s.kind == "decision":
             if s.switch_cases:
@@ -811,8 +857,12 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
         raise ConversionError("Not a playbook definition (missing 'nodes').")
     hunt = defn.get("hunt") or {}
     meta = dict(hunt.get("meta") or {})
+    passthrough = meta.pop("x_hunt_frontmatter", None)
+    if isinstance(passthrough, dict):
+        for k, v in passthrough.items():
+            meta.setdefault(k, v)
     out: list[str] = ["---"]
-    out.append(_dump(meta, sort_keys=False, default_flow_style=False).strip())
+    out.append(_fm_dump(meta))
     out.append("---\n")
     out.append(f"# {hunt.get('name', 'Untitled hunt')}\n")
 
@@ -860,7 +910,7 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             out.append("```")
         elif ntype == "analytic":
             out.append("```agent")
-            out.append(_dump({k: cfg[k] for k in cfg if k != "body"}, sort_keys=False).strip())
+            out.append(_dump({k: cfg[k] for k in cfg if k not in ("body", "x_hunt_attrs")}, sort_keys=False).strip())
             out.append("```")
         elif ntype == "checkpoint":
             if cfg.get("switch_cases"):
@@ -881,8 +931,9 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
         elif ntype == "action":
             tgt = f" target={cfg['target']}" if cfg.get("target") else ""
             out.append(f"```action{tgt}")
-            if cfg.get("action_approval"):
-                out += ["~~~yaml", f"approval: {cfg['action_approval']}", "~~~"]
+            gate = {k: cfg[src] for k, src in (("approval", "action_approval"), ("track", "track")) if cfg.get(src)}
+            if gate:
+                out += ["~~~yaml", _dump(gate, sort_keys=False).strip(), "~~~"]
             out.append((cfg.get("instructions") or "").rstrip())
             out.append("```")
         else:  # task
@@ -890,6 +941,11 @@ def definition_to_markdown(defn: dict[str, Any]) -> str:
             out.append(f"```manual{tgt}")
             out.append((cfg.get("instructions") or "").rstrip())
             out.append("```")
+        # Tier-2 attributes the definition carried verbatim come back as a
+        # step-level attribute block (SPEC §4.2).
+        extra = (node.get("primitive_config") or {}).get("x_hunt_attrs") if ntype in ("query", "collection") else cfg.get("x_hunt_attrs")
+        if isinstance(extra, dict) and extra:
+            out += ["~~~yaml", _dump(extra, sort_keys=False, allow_unicode=True).strip(), "~~~"]
         # transitions
         kids = children.get(slug, [])
         is_switch = ntype == "checkpoint" and cfg.get("switch_cases")

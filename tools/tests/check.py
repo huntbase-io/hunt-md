@@ -136,6 +136,152 @@ for path in hunts:
         detail = f"{key} changed: {before[key]!r} -> {after[key]!r}"[:300]
     report(f"{path.name} definition round-trip", not drift, detail)
 
+print("\npassthrough — unknown frontmatter keys and step attrs survive every exporter (SPEC §2)")
+from huntmd.core import effective_guardrails as _eg  # noqa: E402
+
+#: Frontmatter keys an exporter carries natively (and may normalise: label order,
+#: regenerated references, materialised guardrails). Everything *else* must come
+#: back byte-equal — that is the passthrough contract.
+_NATIVE_FM = {"id", "type", "name", "labels", "tlp", "severity", "hypothesis", "references", "parameters", "targets",
+              "guardrails", "created", "modified", "created_by", "x_cacao_source"}
+
+
+def _norm(v):
+    """Folded scalars re-emit with different trailing whitespace; that is not drift."""
+    if isinstance(v, str):
+        return v.strip()
+    if isinstance(v, dict):
+        return {k: _norm(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    return v
+
+
+def passthrough_fingerprint(md: str) -> dict:
+    pb = parse_markdown(md)
+    return _norm({
+        "frontmatter": {k: v for k, v in pb.meta.items() if k not in _NATIVE_FM},
+        "targets": pb.meta.get("targets"),
+        "parameters": pb.meta.get("parameters"),
+        "guardrails": _eg(pb.meta),
+        # parallel/group are authoring sugar, not nodes (documented loss on the definition path)
+        "attrs": {s.slug: {k: v for k, v in s.attrs.items() if k != "cacao_id"} for s in pb.steps if s.kind not in ("parallel", "group")},
+    })
+
+
+def check_passthrough(name: str, md: str) -> None:
+    before = passthrough_fingerprint(md)
+    for label, fn in (
+        ("cacao", lambda m: cacao_to_markdown(markdown_to_cacao(m))),
+        ("definition", lambda m: definition_to_markdown(markdown_to_definition(m))),
+        ("markdown", lambda m: __import__("huntmd.core", fromlist=["playbook_to_markdown"]).playbook_to_markdown(parse_markdown(m))),
+    ):
+        try:
+            after = passthrough_fingerprint(fn(md))
+        except Exception as exc:  # noqa: BLE001
+            report(f"{name} passthrough via {label}", False, f"{type(exc).__name__}: {exc}")
+            continue
+        drift = [k for k in before if before[k] != after[k]]
+        detail = ""
+        if drift:
+            k = drift[0]
+            if isinstance(before[k], dict) and isinstance(after[k], dict):
+                keys = sorted({kk for kk in set(before[k]) | set(after[k]) if before[k].get(kk) != after[k].get(kk)})
+                detail = f"{k} differs at {keys[:3]}: {[(before[k].get(kk), after[k].get(kk)) for kk in keys[:1]]}"[:300]
+            else:
+                detail = f"{k}: {before[k]!r} -> {after[k]!r}"[:300]
+        report(f"{name} passthrough via {label}", not drift, detail)
+
+
+for path in hunts:
+    check_passthrough(path.name, path.read_text(encoding="utf-8"))
+
+# A hunt that uses keys no exporter knows, at every level: a frontmatter block
+# from a future spec revision, a private extension on a target, Tier-2 attrs on
+# a query, a decision, a task and an action, and an agent step with in/out.
+_unknown = """---
+type: investigation
+name: passthrough fixture
+labels: [hunt, attack.t1000]
+tlp: green
+severity: low
+hypothesis: x
+future_block:
+  nested: {a: 1, b: [x, y]}
+  text: keep me
+private_ext: verbatim
+parameters:
+  lookback: {type: duration, default: "7d"}
+targets:
+  siem: {category: siem, name: SIEM, vendor_ext: {product: p}, telemetry: [identity]}
+  hunter: {agent: true, name: Hunt agent}
+  tier2: {role: analyst, name: Analyst}
+---
+
+# passthrough fixture
+
+## q
+```kql target=siem params=(days=lookback) out=$rows
+~~~yaml
+notes: collected via raw accessor
+reads: [a, b]
+~~~
+x {{days}}
+```
+
+## d
+~~~yaml
+owner: pki
+~~~
+if: `q.rows > 0`
+then: → a
+else: → t
+
+## a
+```agent target=hunter in=[$rows] out=$verdict
+~~~yaml
+budget: 200
+~~~
+objective: o
+tools: [siem]
+max_iterations: 2
+context: [q]
+```
+
+## t
+```manual target=tier2
+~~~yaml
+sla: 4h
+~~~
+review
+```
+→ end
+
+## act
+```action target=siem
+~~~yaml
+approval: required
+track: containment
+severity_note: high
+~~~
+contain
+```
+→ end
+"""
+check_passthrough("unknown-keys fixture", _unknown)
+report(
+    "unknown frontmatter reaches the definition verbatim",
+    markdown_to_definition(_unknown)["hunt"]["meta"]["x_hunt_frontmatter"]["future_block"]["nested"]["b"] == ["x", "y"],
+)
+report(
+    "unknown step attrs reach the definition verbatim",
+    next(n for n in markdown_to_definition(_unknown)["nodes"] if n["id"] == "q")["primitive_config"]["x_hunt_attrs"]["notes"] == "collected via raw accessor",
+)
+report(
+    "unknown frontmatter reaches the CACAO export verbatim",
+    markdown_to_cacao(_unknown)["x_hunt"]["frontmatter"]["private_ext"] == "verbatim",
+)
+
 print("\nsession-derived export — UUID ids must render as readable slugs")
 # A Huntbase session-derived definition carries DB UUIDs as node ids (not
 # authored slugs). The export must key headings + transitions off the label so
@@ -230,6 +376,14 @@ bad_key = validate_markdown(base.format(extra="guardrails: { telemetryy: trusted
 report("unknown guardrail key is an error", any(i.level == "error" and "unknown guardrail" in i.message for i in bad_key))
 bad_val = validate_markdown(base.format(extra="guardrails: { telemetry: whatever }\n"), profile="format")
 report("invalid guardrail value is an error", any(i.level == "error" and "not in" in i.message for i in bad_val))
+# SPEC §8.1 shows the per-step override as a *trailing* ~~~yaml block inside the agent fence.
+_trailing = base.format(extra="").replace("max_iterations: 2\n", "max_iterations: 2\n~~~yaml\nguardrails: { evidence: citation_required }\n~~~\n")
+_tstep = parse_markdown(_trailing).steps[0]
+report(
+    "trailing ~~~yaml inside an agent fence parses (SPEC §8.1 form)",
+    _tstep.attrs.get("guardrails") == {"evidence": "citation_required"} and _tstep.attrs.get("max_iterations") == 2,
+    f"attrs={_tstep.attrs}",
+)
 report(
     "guardrails reach the runtime definition",
     markdown_to_definition(base.format(extra=""))["hunt"]["meta"].get("guardrails", {}).get("telemetry") == "untrusted",
