@@ -336,7 +336,7 @@ the playbook id (SPEC §10), so re-exporting an unchanged hunt is stable, and an
 event can be updated in place. Object templates are pinned to
 `threat-hunt-*` v1; the taxonomy vocabularies to `hunt-ex` v4.
 
-**Verified against a live MISP** (2.5.44 via misp-docker) —
+**Verified against a live MISP** (2.5.44 and, for 0.6, 2.5.45 via misp-docker) —
 [`tools/tests/e2e_misp.py`](./tools/tests/e2e_misp.py) pushes every repo hunt,
 fetches it back as MISP serialises it, re-imports it byte-exact, and confirms
 `restSearch` by `hunt-ex:telemetry` + `hunt-ex:query-language` finds them. What
@@ -344,12 +344,22 @@ that surfaced, so you don't rediscover it:
 
 - **The instance must have the `threat-hunt-*` templates and `hunt-ex`
   taxonomy.** They were merged upstream recently; images built before that
-  (2.5.44's bundle, for one) don't have them, and MISP **silently drops** any
-  object whose template it doesn't know — the event saves, tags and attachment
-  land, and the objects just aren't there. Run
+  (2.5.44's and 2.5.45's bundles, for two) don't have them, and MISP
+  **silently drops** any object whose template it doesn't know — the event
+  saves, tags and attachment land, and the objects just aren't there. Run
   `cake Admin updateObjectTemplates` / `updateTaxonomies` (or update the
   `misp-objects` / `misp-taxonomies` submodules) and *enable* the `hunt-ex`
-  taxonomy first. The e2e script checks for this before pushing.
+  taxonomy first. The e2e script checks for this before pushing. The
+  misp-docker core image has no `git`, so the practical route is: fetch
+  `hunt-ex/machinetag.json` and the four `threat-hunt-*/definition.json`
+  files from GitHub, `docker cp` them under
+  `/var/www/MISP/app/files/{taxonomies,misp-objects/objects}/`, `chown` to
+  `www-data`, then `POST /taxonomies/update` and `POST /objectTemplates/update`.
+- **misp-docker setup that works:** copy `template.env` to `.env`, set
+  `BASE_URL=https://localhost:8443`, `CORE_HTTPS_PORT=8443`,
+  `CORE_HTTP_PORT=8080` (the variable names are `CORE_*`, not `HTTPS_PORT`),
+  and `ADMIN_KEY=` to a value that is **exactly 40 alphanumerics** — a 39-char
+  key is rejected at init with a log line and no key is set.
 - **Re-export ⇒ `POST /events/edit/<uuid>`, not `add`.** Ids are deterministic,
   so a second `add` is a duplicate. Under `edit`, single-valued attributes
   (`status`, `hypothesis`, `query`, …) have value-independent ids and are

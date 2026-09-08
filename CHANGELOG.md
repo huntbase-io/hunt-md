@@ -69,6 +69,17 @@ errors and the same warnings under `--profile format` and `--profile huntbase`
   definition round-trip.
 - `Issue` gains an `info` level; only errors affect the exit code.
 
+### Verified
+
+- `tools/tests/e2e_misp.py` against a live MISP 2.5.45 (misp-docker, taxonomy
+  v4 and `threat-hunt-*` v1 installed): every repo hunt pushes, all objects,
+  attributes, references and tags are stored, the re-fetched event re-imports
+  byte-exact, the objects-only draft carries `hunt:`, target telemetry and
+  `provenance.source`, the §12.3 outcome/handoff/period land, and `restSearch`
+  by `hunt-ex:trigger` / `handoff` / `telemetry` / `outcome` finds the right
+  hunts. A second run takes the `/events/edit` path. The script now covers
+  every file in `hunts/` and asserts the 0.6 additions.
+
 ### Deprecated (removed no earlier than 0.8)
 
 - `misp.trigger` / `methodology` / `applicability` / `handoff` → `hunt.*`
