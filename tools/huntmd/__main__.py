@@ -153,9 +153,10 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("file")
     v.add_argument(
         "--profile",
-        choices=["huntbase", "format", "cacao", "misp"],
+        choices=["huntbase", "format", "cacao", "misp", "quality"],
         default="huntbase",
-        help="lint against a runtime/interchange profile (default: huntbase)",
+        help="lint against a runtime/interchange profile (default: huntbase); "
+        "'quality' adds the opt-in rules that make a hunt more than a rule",
     )
     v.add_argument(
         "--max-tlp",

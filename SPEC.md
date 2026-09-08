@@ -178,6 +178,54 @@ Lint: when either block is present, every stage slug appears in `coverage`
 `quality` profile (§13) warns when fewer than two stages are covered — a
 one-stage hunt is a rule.
 
+### 3.5 Blind spots — what a dead end costs
+
+Hunts routinely stop not because the hypothesis was refuted but because the
+data or the process needed to answer it does not exist: a source is not
+onboarded, retention expired, a field is unparsed, nobody owns the template. The
+format already keeps that state distinct (`unavailable:`, §7.2) and forbids
+closing on it (§8.1). What it did not record is *what the gap costs*, which is
+the most valuable output a failed hunt produces and the thing that evaporates
+if it only lives in an analyst's head.
+
+A `blind_spots:` entry is that record, written once and referenced from
+wherever the dead end occurs:
+
+```yaml
+blind_spots:
+  - id: no-ca-audit-events
+    stage: esc1-enrolment                  # optional; a §3.4 stage slug
+    requires: "ADCS role-service auditing (4886–4888) on every issuing CA"
+    question: "which host each certificate request came from"
+    risk: >
+      Without the source host, an issued certificate cannot be tied to a
+      workstation, so containment scopes to the identity only and the actor's
+      foothold survives.
+    owner: pki-platform
+    remediation: "enable Audit Certification Services + CA AuditFilter 127"
+```
+
+| key | meaning |
+|---|---|
+| `id` | required, unique; what the references below name |
+| `requires` | the source, field, retention or process that is missing |
+| `question` | what could not be answered without it |
+| `risk` | the business exposure of leaving it that way — prose, at whatever fidelity the author can manage |
+| `stage`, `owner`, `remediation` | optional: where in the chain, who fixes it, how |
+
+Three things point at a blind spot:
+
+- a `coverage:` entry with `status: not_visible` (`blind_spot: <id>`, §3.4);
+- an `unavailable:` branch — `unavailable: → escalate-gap (blind_spot: <id>)` — so
+  the decision that could not be made names its cost;
+- a run result's `telemetry_coverage.missing[].blind_spot` (§12), so the gap the
+  runtime actually hit is the one the author anticipated.
+
+Aggregated across a library, blind spots are the demand signal for the next
+data source. Lint: ids unique (error); a reference to an undeclared id (error);
+an entry with no `requires` or `risk` warns; the `quality` profile warns on an
+`unavailable:` branch that names no blind spot.
+
 ### 3.2 Severity
 Prefer the ordinal words `critical | high | medium | low`. A numeric `severity`
 (0–100, CACAO-style) is accepted; runtimes that are ordinal bucket it
@@ -394,6 +442,12 @@ them is how hunts quietly conclude "benign":
 under the default `missing_data: not_benign` guardrail (§8.1) a linter rejects
 that. "We didn't look" is not a finding.
 
+An `unavailable:` branch MAY name the blind spot it is the cost of (§3.5):
+
+```markdown
+unavailable:   → request-dns-logs (blind_spot: no-dns-telemetry)
+```
+
 ### 7.3 Switch (multi-way)
 ```markdown
 ## route-by-verdict
@@ -538,6 +592,8 @@ the graph has no `agent` steps, `if~:` decisions, or human `task`s;
 | `labels: attack.*` | `attack_techniques[]` |
 | `hunt:` | `hunt { trigger, methodology, applicability, handoff, justification, assets, review_by }` (§3.3) |
 | `scenario:` / `coverage:` | `scenario { summary, stages[] }`, `coverage[] { stage, status, steps[], reason, blind_spot }` (§3.4) |
+| `blind_spots:` | `blind_spots[] { id, stage, requires, question, risk, owner, remediation }` (§3.5) |
+| `unavailable: → x (blind_spot: id)` | `edge { branch: on_unavailable }` + `step.blind_spot` (§7.2) |
 | `targets.*.telemetry` | `targets[].telemetry[]` — declared or derived from category (§6) |
 | `guardrails:` | `guardrails { telemetry, evidence, missing_data, claims }` (§8.1) |
 | `unavailable:` | `edge { branch: on_unavailable }` (§7.2) |

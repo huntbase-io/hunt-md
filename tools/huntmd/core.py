@@ -492,7 +492,14 @@ def _parse_section(slug: str, kind_override: str | None, lines: list[str], paren
             if t:
                 out_edges.append((t, "default", "sequence"))
         elif line.startswith("unavailable:"):
-            t = _target_of(line.split(":", 1)[1])
+            rest = line.split(":", 1)[1]
+            # `unavailable: → escalate-gap (blind_spot: no-ca-audit)` names the
+            # §3.5 record this dead end is the cost of.
+            bm = re.search(r"\(\s*blind_spot\s*:\s*([A-Za-z0-9_.-]+)\s*\)", rest)
+            if bm:
+                step.attrs["blind_spot"] = bm.group(1)
+                rest = rest[: bm.start()] + rest[bm.end() :]
+            t = _target_of(rest)
             if t == "end":
                 step.unavailable_to_end = True
             elif t:
@@ -742,6 +749,7 @@ def _config_for(s: Step) -> dict[str, Any]:
 #: Frontmatter keys the definition carries as first-class ``meta`` entries.
 _DEFINITION_META_KEYS = (
     "labels", "severity", "tlp", "hypothesis", "references", "parameters", "targets", "type", "hunt", "scenario", "coverage",
+    "blind_spots",
 )
 
 
@@ -777,6 +785,7 @@ _FM_ORDER = (
     "hunt",
     "scenario",
     "coverage",
+    "blind_spots",
     "references",
     "parameters",
     "targets",
@@ -794,6 +803,7 @@ _NATIVE_ATTRS = {
     "target",
     "params",
     "track",
+    "blind_spot",
 }
 
 
@@ -886,11 +896,12 @@ def playbook_to_markdown(pb: Playbook) -> str:
                     ("on_unavailable", "unavailable"),
                     ("on_refutes", "else"),
                 ):
+                    tail = f" (blind_spot: {s.attrs['blind_spot']})" if keyword == "unavailable" and s.attrs.get("blind_spot") else ""
                     for to, br in children.get(s.slug, []):
                         if br == branch:
-                            out.append(f"{keyword}: → {to}")
+                            out.append(f"{keyword}: → {to}{tail}")
                 if s.unavailable_to_end:
-                    out.append("unavailable: → end")
+                    out.append("unavailable: → end" + (f" (blind_spot: {s.attrs['blind_spot']})" if s.attrs.get("blind_spot") else ""))
         elif s.kind == "loop":
             bound = f" (max_iterations={s.attrs['max_iterations']})" if s.attrs.get("max_iterations") else ""
             out.append(f"while: {s.condition or ''}{bound}")
@@ -1130,6 +1141,7 @@ def validate_markdown(text: str, *, profile: str = "huntbase", max_tlp: str | No
     issues += _check_hunt_block(pb)
     issues += _check_telemetry(pb)
     issues += _check_scenario(pb, profile)
+    issues += _check_blind_spots(pb, profile)
 
     # edges reference existing nodes
     for e in pb.edges:
@@ -1297,6 +1309,52 @@ def _check_scenario(pb: Playbook, profile: str) -> list[Issue]:
             issues.append(Issue("error", "", f"scenario stage '{slug}' has no coverage entry — covered, not_visible, out_of_scope or existing_rule?"))
     if profile == "quality" and stage_slugs and covered < 2:
         issues.append(Issue("warn", "", f"only {covered} of {len(stage_slugs)} scenario stages are covered — a one-stage hunt is a rule, not a hunt"))
+    return issues
+
+
+def blind_spot_ids(meta: dict[str, Any]) -> list[str]:
+    spots = meta.get("blind_spots")
+    return [str(b.get("id")) for b in spots if isinstance(b, dict) and b.get("id")] if isinstance(spots, list) else []
+
+
+def _check_blind_spots(pb: Playbook, profile: str) -> list[Issue]:
+    """`blind_spots:` (SPEC §3.5): a dead end is a record with a cost, and every
+    reference to one resolves."""
+    issues: list[Issue] = []
+    spots = pb.meta.get("blind_spots")
+    ids: list[str] = []
+    if spots is not None:
+        if not isinstance(spots, list):
+            return [Issue("error", "", "blind_spots: must be a list of {id, requires, risk, …} entries")]
+        stage_slugs = {str(s.get("slug")) for s in scenario_stages(pb.meta)}
+        for i, b in enumerate(spots):
+            if not isinstance(b, dict):
+                issues.append(Issue("error", "", f"blind_spots[{i}] must be a mapping"))
+                continue
+            bid = str(b.get("id") or "")
+            if not bid:
+                issues.append(Issue("error", "", f"blind_spots[{i}] has no id"))
+                continue
+            if bid in ids:
+                issues.append(Issue("error", "", f"blind spot '{bid}' is declared twice"))
+            ids.append(bid)
+            for key in ("requires", "risk"):
+                if not b.get(key):
+                    issues.append(Issue("warn", "", f"blind spot '{bid}' has no {key}: — say what is missing and what it costs"))
+            if b.get("stage") and stage_slugs and str(b["stage"]) not in stage_slugs:
+                issues.append(Issue("error", "", f"blind spot '{bid}': stage '{b['stage']}' is not in scenario.stages"))
+    # References: coverage entries and unavailable: branches.
+    for entry in pb.meta.get("coverage") or []:
+        if isinstance(entry, dict) and entry.get("blind_spot") and str(entry["blind_spot"]) not in ids:
+            issues.append(Issue("error", "", f"coverage[{entry.get('stage')}]: blind_spot '{entry['blind_spot']}' is not declared in blind_spots:"))
+    for s in pb.steps:
+        ref = s.attrs.get("blind_spot")
+        if ref and str(ref) not in ids:
+            issues.append(Issue("error", s.slug, f"blind_spot '{ref}' is not declared in blind_spots:"))
+        if profile == "quality" and s.kind == "decision" and s.fuzzy and not ref:
+            routes_unavailable = s.unavailable_to_end or any(e.frm == s.slug and e.branch == "on_unavailable" for e in pb.edges)
+            if routes_unavailable:
+                issues.append(Issue("warn", s.slug, "unavailable: branch with no (blind_spot: …) — the dead end has no recorded cost"))
     return issues
 
 

@@ -77,6 +77,42 @@ coverage:
     reason: >
       No cloud sign-in telemetry is in scope for this hunt; a hybrid-joined
       impersonated identity reaching the tenant would not be seen here.
+    blind_spot: no-cloud-signin
+blind_spots:            # what each dead end costs, so it becomes a request rather than a shrug (SPEC §3.5)
+  - id: no-ca-audit-events
+    stage: esc1-enrolment
+    requires: "ADCS role-service auditing (4886–4888) enabled on every issuing CA"
+    question: "which host each certificate request was submitted from"
+    risk: >
+      The CA database records who requested a certificate but not from where.
+      Without the source host, containment scopes to the identity only and the
+      workstation the actor is on keeps its foothold.
+    owner: pki-platform
+    remediation: "Audit Certification Services subcategory + CA AuditFilter 127"
+  - id: uncollected-ca
+    stage: esc1-enrolment
+    requires: "raw-disk collection from every issuing CA in the forest, not just the ones known to the SOC"
+    question: "whether an ESC1 request was made at all"
+    risk: >
+      An issuing CA that was never collected is an issuing CA whose entire
+      request history is unknown; a single such host makes every negative
+      result from this hunt unreportable.
+    owner: pki-platform
+  - id: no-template-owner
+    requires: "a named owner per published certificate template"
+    question: "whether an enrollment naming another principal was intended"
+    risk: >
+      Without an owner to confirm intent, a suspicious request cannot be
+      closed either way, and the template stays enrollable while the question
+      waits.
+    owner: pki-platform
+  - id: no-cloud-signin
+    stage: cloud-pivot
+    requires: "cloud identity sign-in telemetry joined to on-premises identities"
+    question: "whether an impersonated hybrid identity reached the tenant"
+    risk: >
+      AA26-237A ended in cloud compromise at both organisations; this hunt
+      would confirm the on-premises escalation and miss the part that mattered.
 references:
   - name: "GuidePoint Security — Hunting Abuse: Detecting Privilege Escalation Through the ADCS Database"
     url: https://www.guidepointsecurity.com/blog/detecting-privilege-escalaction-through-adcs/
@@ -353,7 +389,7 @@ answer; "nobody owns this template" is itself a finding for escalate-gap.
 if~: "one or more principals obtained, or attempted to obtain, a certificate that authenticates as a different and more privileged identity through a template that permits an enrollee-supplied subject — rather than authorized enrollment-on-behalf-of" (confidence: high, judge=hunter)
 then: → contain
 indeterminate: → manual-review
-unavailable: → escalate-gap      # CA database or template ACLs missing: never close here
+unavailable: → escalate-gap (blind_spot: no-template-owner)   # never close here
 else: → close-with-notes
 
 ## contain
@@ -415,7 +451,7 @@ of this hunt starts from a known-clean baseline.
 if~: "every issuing CA in the forest was collected and parsed with committed and transaction-log rows for the whole hunt window, and the template configuration was enumerated successfully" (confidence: high, judge=hunter)
 then: → close-no-evidence
 indeterminate: → escalate-gap
-unavailable: → escalate-gap
+unavailable: → escalate-gap (blind_spot: uncollected-ca)
 else: → escalate-gap
 
 ## escalate-gap

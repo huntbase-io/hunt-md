@@ -584,6 +584,50 @@ report("a malformed technique id warns", any("not a Txxxx" in i.message for i in
 report("an unknown coverage stage is an error", any("not in scenario.stages" in i.message for i in validate_markdown(_sc_ok.replace("stage: s1", "stage: s9"), profile="format")))
 report("scenario/coverage reach the definition first-class", markdown_to_definition(_sc_ok)["hunt"]["meta"]["coverage"][0]["status"] == "covered")
 
+print("\nblind spots (SPEC §3.5, §7.2)")
+_bs = """---
+hypothesis: x
+tlp: green
+labels: [attack.t1000]
+blind_spots:
+  - {{id: no-dns, requires: dns logs, risk: tunnelling stays invisible}}
+---
+# t
+## judge
+if~: "looks bad" (confidence: high, judge=a)
+then: → act
+indeterminate: → review
+unavailable: → review (blind_spot: {ref})
+else: → close
+## act
+```manual target=a
+x
+```
+→ end
+## review
+```manual target=a
+x
+```
+→ end
+## close
+```manual target=a
+x
+```
+→ end
+"""
+_bs_ok = _bs.format(ref="no-dns")
+_bs_pb = parse_markdown(_bs_ok)
+report("unavailable: (blind_spot: id) parses to the step attr + edge", _bs_pb.steps[0].attrs.get("blind_spot") == "no-dns" and any(e.branch == "on_unavailable" and e.to == "review" for e in _bs_pb.edges))
+report("well-formed blind_spots lints clean", not [i for i in validate_markdown(_bs_ok, profile="format") if i.level == "error"], str(validate_markdown(_bs_ok, profile="format")))
+report("an undeclared blind_spot reference is an error", any("not declared" in i.message for i in validate_markdown(_bs.format(ref="nope"), profile="format")))
+report("a blind spot with no risk warns", any("no risk" in i.message for i in validate_markdown(_bs_ok.replace(", risk: tunnelling stays invisible", ""), profile="format")))
+report("unavailable: without a blind spot warns under --profile quality", any("no recorded cost" in i.message for i in validate_markdown(_bs_ok.replace(" (blind_spot: no-dns)", ""), profile="quality")))
+report("…and not under --profile format", not any("no recorded cost" in i.message for i in validate_markdown(_bs_ok.replace(" (blind_spot: no-dns)", ""), profile="format")))
+from huntmd.core import playbook_to_markdown as _p2m  # noqa: E402
+report("blind_spot annotation survives md → md", "(blind_spot: no-dns)" in _p2m(_bs_pb))
+report("blind_spot annotation survives md → CACAO → md", parse_markdown(cacao_to_markdown(markdown_to_cacao(_bs_ok))).steps[0].attrs.get("blind_spot") == "no-dns")
+report("blind_spot annotation survives md → definition → md", next(s for s in parse_markdown(definition_to_markdown(markdown_to_definition(_bs_ok))).steps if s.slug == "judge").attrs.get("blind_spot") == "no-dns")
+
 print("\nrun results (SPEC §12)")
 from huntmd.results import validate_result  # noqa: E402
 
