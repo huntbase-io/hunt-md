@@ -12,7 +12,7 @@ huntbase-io/hunt-md            public, MIT    the format + tooling + public hunt
         ▲
         │ pinned submodule (one-way)
         │
-huntbase-io/hunt-md-internal   private        proprietary hunts
+your-org/hunt-md-private       private        proprietary hunts
 ```
 
 ## Why not a fork
@@ -32,12 +32,12 @@ wrong, and fixing a mistake means rewriting public history.
 ## Setup
 
 ```bash
-gh repo create huntbase-io/hunt-md-internal --private --clone
-cd hunt-md-internal
+gh repo create your-org/hunt-md-private --private --clone
+cd hunt-md-private
 
 git submodule add https://github.com/huntbase-io/hunt-md.git vendor/hunt-md
-git -C vendor/hunt-md checkout v0.4          # pin a tag, not a moving branch
-git commit -m "Vendor hunt.md v0.4"
+git -C vendor/hunt-md checkout v0.6          # pin a tag, not a moving branch
+git commit -m "Vendor hunt.md v0.6"
 
 pip install ./vendor/hunt-md/tools           # provides `huntmd`
 mkdir -p hunts
@@ -46,9 +46,9 @@ mkdir -p hunts
 Clone it later with `git clone --recurse-submodules`, and upgrade deliberately:
 
 ```bash
-git -C vendor/hunt-md fetch --tags && git -C vendor/hunt-md checkout v0.5
+git -C vendor/hunt-md fetch --tags && git -C vendor/hunt-md checkout v0.7
 python vendor/hunt-md/tools/tests/check.py   # confirm nothing regressed
-git commit -am "Upgrade hunt.md to v0.5"
+git commit -am "Upgrade hunt.md to v0.7"
 ```
 
 Pinning to a tag means a public-repo change can never silently alter how your
