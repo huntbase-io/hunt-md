@@ -7,7 +7,7 @@
 [![Spec](https://img.shields.io/badge/spec-v0.7%20draft-blue)](./SPEC.md)
 [![Profiles](https://img.shields.io/badge/profiles-Huntbase%20%7C%20CACAO%20v2%20%7C%20MISP%20%7C%20docs-6f42c1)](./PROFILES.md)
 [![Python](https://img.shields.io/badge/tooling-python%20%E2%89%A5%203.10-3776ab)](./tools)
-[![License](https://img.shields.io/badge/license-see%20LICENSE-lightgrey)](./LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
 [Spec](./SPEC.md) · [Profiles](./PROFILES.md) · [Contributing](./CONTRIBUTING.md) · [Hunt library](./hunts) · [Tooling](./tools)
 
@@ -19,6 +19,11 @@ A `hunt.md` file describes a hunt as a readable, git-diffable document *and* a
 typed graph of steps — queries, data collection, agent reasoning, decisions,
 human review, and response — that a compliant runtime can render, review, and
 run.
+
+Looking for hunts to read or run? The [Huntbase Hunt Hub](https://hub.huntbase.io)
+is a browsable library of 150+ published, reviewed `hunt.md` files; their source
+lives in the public [`huntbase-io/hunts`](https://github.com/huntbase-io/hunts)
+repository.
 
 > **Write once; read it anywhere; run it wherever you have the connectors.**
 
@@ -87,7 +92,7 @@ it moves to a more capable runtime — a gap is a *runtime* limit, never a *form
 ## Quickstart
 
 ```bash
-git clone <this repo> && cd hunt-md
+git clone https://github.com/huntbase-io/hunt-md.git && cd hunt-md
 cp templates/hunt-template.md hunts/my-hunt.md
 ```
 
@@ -102,7 +107,10 @@ cp templates/hunt-template.md hunts/my-hunt.md
 ## Tooling
 
 [`tools/huntmd`](./tools) is the reference converter + validator — stdlib + PyYAML only,
-so it vendors cleanly into a runtime's import path.
+so it vendors cleanly into a runtime's import path. The tooling is versioned
+independently of the spec (`huntmd` 0.1.0 implements SPEC v0.7) and is not on PyPI
+yet, so install it from the repo — from a clone as below, or directly with
+`pip install "git+https://github.com/huntbase-io/hunt-md.git#subdirectory=tools"`.
 
 ```bash
 cd tools && pip install -e .
@@ -140,10 +148,10 @@ See [`tools/README.md`](./tools/README.md) for the full CLI.
 
 ## Status
 
-**Draft format — SPEC v0.6.** Evolving in the open. See [`SPEC.md`](./SPEC.md) §1
+**Draft format — SPEC v0.7.** Evolving in the open. See [`SPEC.md`](./SPEC.md) §1
 for design principles, [`CHANGELOG.md`](./CHANGELOG.md) for what changed and
 what stayed compatible, and [`CONTRIBUTING.md`](./CONTRIBUTING.md) to help.
 
 ## License
 
-See [`LICENSE`](./LICENSE).
+[MIT](./LICENSE).
