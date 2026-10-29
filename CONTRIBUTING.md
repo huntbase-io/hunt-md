@@ -3,6 +3,10 @@
 Thanks for adding to the hunt.md library. Hunts are reviewed like code — in a PR,
 against the format spec and a lint pass.
 
+This project follows the [Code of Conduct](./CODE_OF_CONDUCT.md). Report
+security issues privately as described in [SECURITY.md](./SECURITY.md), not in a
+public issue.
+
 ## Add a hunt
 
 1. Copy `templates/hunt-template.md` into `hunts/`.
